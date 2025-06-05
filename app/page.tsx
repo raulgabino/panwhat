@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { parse } from "date-fns"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Textarea } from "@/components/ui/textarea"
@@ -34,6 +35,9 @@ export default function WhatsAppAnalyzer() {
   const [conversationHistory, setConversationHistory] = useState<Array<{ id: number; preview: string; date: string }>>(
     [],
   )
+
+  const [predictiveAnalysis, setPredictiveAnalysis] = useState<any>(null)
+  const [chartData, setChartData] = useState<any>(null)
 
   // Persistencia automática de datos
   useEffect(() => {
@@ -69,6 +73,19 @@ export default function WhatsAppAnalyzer() {
   useEffect(() => {
     if (analysisData) {
       localStorage.setItem("whatsapp-analysis", JSON.stringify(analysisData))
+    }
+  }, [analysisData])
+
+  // Efecto para procesar datos pesados fuera del ciclo de renderizado
+  useEffect(() => {
+    if (analysisData) {
+      // Procesar análisis predictivo
+      const analysis = performPredictiveAnalysis(analysisData)
+      setPredictiveAnalysis(analysis)
+
+      // Procesar datos para gráficos
+      const charts = prepareChartData(analysisData)
+      setChartData(charts)
     }
   }, [analysisData])
 
@@ -287,8 +304,14 @@ export default function WhatsAppAnalyzer() {
       .map((_, day) => {
         const dayName = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"][day]
         const dayOrders = ordersData.filter((order) => {
-          const orderDate = new Date(order.Fecha)
-          return orderDate.getDay() === day
+          try {
+            // Usar parse para un parseo más robusto de fechas
+            const orderDate = parse(order.Fecha, "dd/MM/yyyy", new Date())
+            return orderDate.getDay() === day
+          } catch (error) {
+            console.warn("Error parsing date:", order.Fecha)
+            return false
+          }
         })
 
         if (dayOrders.length === 0) {
@@ -493,7 +516,16 @@ export default function WhatsAppAnalyzer() {
         const satisfaction = client["Puntuación Satisfacción"] || 0
         const difficulty = client["Puntuación Dificultad"] || 0
         const paymentIssues = client["Problemas Pago"] || 0
-        const lastOrderDate = new Date(client["Último Pedido"])
+
+        let lastOrderDate
+        try {
+          // Usar parse para un parseo más robusto de fechas
+          lastOrderDate = parse(client["Último Pedido"], "dd/MM/yyyy", new Date())
+        } catch (error) {
+          console.warn("Error parsing date:", client["Último Pedido"])
+          lastOrderDate = new Date() // Fecha actual como fallback
+        }
+
         const daysSinceLastOrder = Math.floor((new Date().getTime() - lastOrderDate.getTime()) / (1000 * 60 * 60 * 24))
 
         // Calcular probabilidad de retención (0-1)
@@ -595,7 +627,15 @@ export default function WhatsAppAnalyzer() {
 
     return clientsData
       .map((client) => {
-        const lastOrderDate = new Date(client["Último Pedido"])
+        let lastOrderDate
+        try {
+          // Usar parse para un parseo más robusto de fechas
+          lastOrderDate = parse(client["Último Pedido"], "dd/MM/yyyy", new Date())
+        } catch (error) {
+          console.warn("Error parsing date:", client["Último Pedido"])
+          lastOrderDate = new Date() // Fecha actual como fallback
+        }
+
         const daysSinceLastOrder = Math.floor((today.getTime() - lastOrderDate.getTime()) / (1000 * 60 * 60 * 24))
         const frequency = client["Frecuencia Semanal"] || 0
         const expectedDays = frequency > 0 ? 7 / frequency : 30
@@ -689,7 +729,16 @@ export default function WhatsAppAnalyzer() {
     return clientsData.map((client) => {
       const totalOrders = client["Total Pedidos"] || 0
       const frequency = client["Frecuencia Semanal"] || 0
-      const lastOrderDate = new Date(client["Último Pedido"])
+
+      let lastOrderDate
+      try {
+        // Usar parse para un parseo más robusto de fechas
+        lastOrderDate = parse(client["Último Pedido"], "dd/MM/yyyy", new Date())
+      } catch (error) {
+        console.warn("Error parsing date:", client["Último Pedido"])
+        lastOrderDate = new Date() // Fecha actual como fallback
+      }
+
       const today = new Date()
       const daysSinceLastOrder = Math.floor((today.getTime() - lastOrderDate.getTime()) / (1000 * 60 * 60 * 24))
 
@@ -827,7 +876,15 @@ export default function WhatsAppAnalyzer() {
 
     // Agrupar pedidos por mes
     const monthlyOrders = clientOrders.reduce((acc: any, order: any) => {
-      const date = new Date(order.Fecha)
+      let date
+      try {
+        // Usar parse para un parseo más robusto de fechas
+        date = parse(order.Fecha, "dd/MM/yyyy", new Date())
+      } catch (error) {
+        console.warn("Error parsing date:", order.Fecha)
+        date = new Date() // Fecha actual como fallback
+      }
+
       const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
 
       if (!acc[monthKey]) {
@@ -1278,7 +1335,26 @@ export default function WhatsAppAnalyzer() {
 
             <TabsContent value="visualizations" className="space-y-6">
               {(() => {
-                const chartData = prepareChartData(analysisData)
+                if (!analysisData) {
+                  return (
+                    <Card>
+                      <CardContent className="p-6 text-center">
+                        <p>No hay datos para visualizar</p>
+                      </CardContent>
+                    </Card>
+                  )
+                }
+
+                if (!chartData) {
+                  return (
+                    <Card>
+                      <CardContent className="p-6 text-center">
+                        <p>Procesando visualizaciones...</p>
+                      </CardContent>
+                    </Card>
+                  )
+                }
+
                 return (
                   <>
                     {/* Título y explicación */}
@@ -1731,13 +1807,21 @@ export default function WhatsAppAnalyzer() {
 
             <TabsContent value="gpt-insights">
               {(() => {
-                const predictiveAnalysis = performPredictiveAnalysis(analysisData)
+                if (!analysisData) {
+                  return (
+                    <Card>
+                      <CardContent className="p-6 text-center">
+                        <p>No hay datos para analizar</p>
+                      </CardContent>
+                    </Card>
+                  )
+                }
 
                 if (!predictiveAnalysis) {
                   return (
                     <Card>
                       <CardContent className="p-6 text-center">
-                        <p>No hay suficientes datos para análisis predictivo</p>
+                        <p>Procesando insights y visualizaciones...</p>
                       </CardContent>
                     </Card>
                   )

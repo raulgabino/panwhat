@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { parse } from "date-fns"
+import { parseISO } from "date-fns"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Textarea } from "@/components/ui/textarea"
@@ -24,6 +24,7 @@ import {
   Line,
   Area,
   AreaChart,
+  Legend,
 } from "recharts"
 import { Progress } from "@/components/ui/progress"
 
@@ -31,6 +32,7 @@ export default function WhatsAppAnalyzer() {
   const [conversations, setConversations] = useState("")
   const [allConversations, setAllConversations] = useState<string[]>([])
   const [analysisData, setAnalysisData] = useState<any>(null)
+  const [cleanedData, setCleanedData] = useState<any>(null)
   const [isProcessing, setIsProcessing] = useState(false)
   const [conversationHistory, setConversationHistory] = useState<Array<{ id: number; preview: string; date: string }>>(
     [],
@@ -76,18 +78,82 @@ export default function WhatsAppAnalyzer() {
     }
   }, [analysisData])
 
-  // Efecto para procesar datos pesados fuera del ciclo de renderizado
+  // Efecto para limpiar y procesar los datos
   useEffect(() => {
     if (analysisData) {
-      // Procesar análisis predictivo
-      const analysis = performPredictiveAnalysis(analysisData)
-      setPredictiveAnalysis(analysis)
+      try {
+        // Crear una copia profunda del objeto analysisData
+        const cleanedDataCopy = JSON.parse(JSON.stringify(analysisData))
 
-      // Procesar datos para gráficos
-      const charts = prepareChartData(analysisData)
-      setChartData(charts)
+        // Procesar fechas en clientsData
+        if (cleanedDataCopy.clientsData && Array.isArray(cleanedDataCopy.clientsData)) {
+          cleanedDataCopy.clientsData = cleanedDataCopy.clientsData.map((client: any) => {
+            try {
+              if (client["Último Pedido"]) {
+                // Intentar convertir la fecha a un objeto Date
+                client["Último Pedido"] = parseISO(client["Último Pedido"])
+                // Si la fecha no es válida, usar una fecha por defecto
+                if (isNaN(client["Último Pedido"].getTime())) {
+                  client["Último Pedido"] = new Date()
+                }
+              } else {
+                client["Último Pedido"] = new Date()
+              }
+            } catch (error) {
+              console.warn("Error al procesar la fecha del cliente:", error)
+              client["Último Pedido"] = new Date()
+            }
+            return client
+          })
+        }
+
+        // Procesar fechas en ordersData
+        if (cleanedDataCopy.ordersData && Array.isArray(cleanedDataCopy.ordersData)) {
+          cleanedDataCopy.ordersData = cleanedDataCopy.ordersData.map((order: any) => {
+            try {
+              if (order.Fecha) {
+                // Intentar convertir la fecha a un objeto Date
+                order.Fecha = parseISO(order.Fecha)
+                // Si la fecha no es válida, usar una fecha por defecto
+                if (isNaN(order.Fecha.getTime())) {
+                  order.Fecha = new Date()
+                }
+              } else {
+                order.Fecha = new Date()
+              }
+            } catch (error) {
+              console.warn("Error al procesar la fecha del pedido:", error)
+              order.Fecha = new Date()
+            }
+            return order
+          })
+        }
+
+        setCleanedData(cleanedDataCopy)
+      } catch (error) {
+        console.error("Error al limpiar los datos:", error)
+        // En caso de error, usar los datos originales
+        setCleanedData(analysisData)
+      }
     }
   }, [analysisData])
+
+  // Efecto para procesar datos pesados fuera del ciclo de renderizado
+  useEffect(() => {
+    if (cleanedData) {
+      try {
+        // Procesar análisis predictivo
+        const analysis = performPredictiveAnalysis(cleanedData)
+        setPredictiveAnalysis(analysis)
+
+        // Procesar datos para gráficos
+        const charts = prepareChartData(cleanedData)
+        setChartData(charts)
+      } catch (error) {
+        console.error("Error al procesar los datos para análisis:", error)
+      }
+    }
+  }, [cleanedData])
 
   const handleAddConversation = () => {
     if (!conversations.trim()) {
@@ -118,6 +184,9 @@ export default function WhatsAppAnalyzer() {
     }
 
     setIsProcessing(true)
+    setPredictiveAnalysis(null)
+    setChartData(null)
+    setCleanedData(null)
 
     try {
       // Combinar todas las conversaciones
@@ -150,6 +219,9 @@ export default function WhatsAppAnalyzer() {
       setAllConversations([])
       setConversationHistory([])
       setAnalysisData(null)
+      setCleanedData(null)
+      setPredictiveAnalysis(null)
+      setChartData(null)
       setConversations("")
 
       // Limpiar también localStorage
@@ -231,26 +303,26 @@ export default function WhatsAppAnalyzer() {
   const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884D8", "#82CA9D", "#FFC658", "#FF7C7C"]
 
   // Funciones de Análisis Predictivo y Segmentación
-  const performPredictiveAnalysis = (analysisData: any) => {
-    if (!analysisData.clientsData) return null
+  const performPredictiveAnalysis = (data: any) => {
+    if (!data.clientsData) return null
 
     // 1. Segmentación automática de clientes
-    const clientSegments = segmentClients(analysisData.clientsData)
+    const clientSegments = segmentClients(data.clientsData)
 
     // 2. Predicción de demanda mejorada
-    const demandPrediction = predictDemand(analysisData.ordersData, analysisData.productsData)
+    const demandPrediction = predictDemand(data.ordersData, data.productsData)
 
     // 3. Análisis de riesgo de abandono
-    const churnRisk = analyzeChurnRisk(analysisData.clientsData)
+    const churnRisk = analyzeChurnRisk(data.clientsData)
 
     // 4. Oportunidades de crecimiento
-    const growthOpportunities = identifyGrowthOpportunities(analysisData.clientsData)
+    const growthOpportunities = identifyGrowthOpportunities(data.clientsData)
 
     // 5. Análisis de ciclo de vida
-    const lifecycleAnalysis = analyzeClientLifecycle(analysisData.clientsData)
+    const lifecycleAnalysis = analyzeClientLifecycle(data.clientsData)
 
     // 6. NUEVO: Análisis CLV para recuperación de clientes
-    const recoveryAnalysis = calculateCustomerLifetimeValue(analysisData.clientsData)
+    const recoveryAnalysis = calculateCustomerLifetimeValue(data.clientsData)
 
     return {
       clientSegments,
@@ -305,11 +377,10 @@ export default function WhatsAppAnalyzer() {
         const dayName = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"][day]
         const dayOrders = ordersData.filter((order) => {
           try {
-            // Usar parse para un parseo más robusto de fechas
-            const orderDate = parse(order.Fecha, "dd/MM/yyyy", new Date())
-            return orderDate.getDay() === day
+            // Ahora order.Fecha ya es un objeto Date válido
+            return order.Fecha.getDay() === day
           } catch (error) {
-            console.warn("Error parsing date:", order.Fecha)
+            console.warn("Error al filtrar por día:", error)
             return false
           }
         })
@@ -328,7 +399,7 @@ export default function WhatsAppAnalyzer() {
         }
 
         // Calcular tendencia temporal (últimos vs primeros pedidos)
-        const sortedOrders = dayOrders.sort((a, b) => new Date(a.Fecha).getTime() - new Date(b.Fecha).getTime())
+        const sortedOrders = dayOrders.sort((a, b) => a.Fecha.getTime() - b.Fecha.getTime())
         const recentOrders = sortedOrders.slice(-Math.ceil(sortedOrders.length / 3))
         const oldOrders = sortedOrders.slice(0, Math.ceil(sortedOrders.length / 3))
 
@@ -345,7 +416,7 @@ export default function WhatsAppAnalyzer() {
 
         // Análisis estacional (por mes)
         const monthlyVariation = dayOrders.reduce((acc, order) => {
-          const month = new Date(order.Fecha).getMonth()
+          const month = order.Fecha.getMonth()
           if (!acc[month]) acc[month] = []
           acc[month].push(order["Total Piezas"] || 0)
           return acc
@@ -449,7 +520,7 @@ export default function WhatsAppAnalyzer() {
         }
 
         // Análisis temporal más sofisticado
-        const sortedOrders = productOrders.sort((a, b) => new Date(a.Fecha).getTime() - new Date(b.Fecha).getTime())
+        const sortedOrders = productOrders.sort((a, b) => a.Fecha.getTime() - b.Fecha.getTime())
         const recentOrders = sortedOrders.slice(-Math.ceil(sortedOrders.length / 3))
         const oldOrders = sortedOrders.slice(0, Math.ceil(sortedOrders.length / 3))
 
@@ -517,15 +588,8 @@ export default function WhatsAppAnalyzer() {
         const difficulty = client["Puntuación Dificultad"] || 0
         const paymentIssues = client["Problemas Pago"] || 0
 
-        let lastOrderDate
-        try {
-          // Usar parse para un parseo más robusto de fechas
-          lastOrderDate = parse(client["Último Pedido"], "dd/MM/yyyy", new Date())
-        } catch (error) {
-          console.warn("Error parsing date:", client["Último Pedido"])
-          lastOrderDate = new Date() // Fecha actual como fallback
-        }
-
+        // Ahora client["Último Pedido"] ya es un objeto Date válido
+        const lastOrderDate = client["Último Pedido"]
         const daysSinceLastOrder = Math.floor((new Date().getTime() - lastOrderDate.getTime()) / (1000 * 60 * 60 * 24))
 
         // Calcular probabilidad de retención (0-1)
@@ -627,15 +691,8 @@ export default function WhatsAppAnalyzer() {
 
     return clientsData
       .map((client) => {
-        let lastOrderDate
-        try {
-          // Usar parse para un parseo más robusto de fechas
-          lastOrderDate = parse(client["Último Pedido"], "dd/MM/yyyy", new Date())
-        } catch (error) {
-          console.warn("Error parsing date:", client["Último Pedido"])
-          lastOrderDate = new Date() // Fecha actual como fallback
-        }
-
+        // Ahora client["Último Pedido"] ya es un objeto Date válido
+        const lastOrderDate = client["Último Pedido"]
         const daysSinceLastOrder = Math.floor((today.getTime() - lastOrderDate.getTime()) / (1000 * 60 * 60 * 24))
         const frequency = client["Frecuencia Semanal"] || 0
         const expectedDays = frequency > 0 ? 7 / frequency : 30
@@ -730,15 +787,8 @@ export default function WhatsAppAnalyzer() {
       const totalOrders = client["Total Pedidos"] || 0
       const frequency = client["Frecuencia Semanal"] || 0
 
-      let lastOrderDate
-      try {
-        // Usar parse para un parseo más robusto de fechas
-        lastOrderDate = parse(client["Último Pedido"], "dd/MM/yyyy", new Date())
-      } catch (error) {
-        console.warn("Error parsing date:", client["Último Pedido"])
-        lastOrderDate = new Date() // Fecha actual como fallback
-      }
-
+      // Ahora client["Último Pedido"] ya es un objeto Date válido
+      const lastOrderDate = client["Último Pedido"]
       const today = new Date()
       const daysSinceLastOrder = Math.floor((today.getTime() - lastOrderDate.getTime()) / (1000 * 60 * 60 * 24))
 
@@ -779,10 +829,10 @@ export default function WhatsAppAnalyzer() {
     })
   }
 
-  const prepareChartData = (analysisData: any) => {
+  const prepareChartData = (data: any) => {
     // Datos para gráfico de productos
     const productChartData =
-      analysisData.productsData?.slice(0, 8).map((product: any, index: number) => ({
+      data.productsData?.slice(0, 8).map((product: any, index: number) => ({
         name: product.Producto,
         cantidad: product["Total Pedidos"],
         color: COLORS[index % COLORS.length],
@@ -790,7 +840,7 @@ export default function WhatsAppAnalyzer() {
 
     // Datos para gráfico de clientes por valor
     const clientValueData =
-      analysisData.clientsData?.slice(0, 10).map((client: any) => ({
+      data.clientsData?.slice(0, 10).map((client: any) => ({
         name:
           client["Nombre Cliente"].length > 15
             ? client["Nombre Cliente"].substring(0, 15) + "..."
@@ -801,7 +851,7 @@ export default function WhatsAppAnalyzer() {
 
     // Datos para tendencias horarias
     const hourlyData =
-      analysisData.trendsData
+      data.trendsData
         ?.filter((trend: any) => trend.Tipo === "Hora")
         .map((trend: any) => ({
           hora: trend.Periodo,
@@ -810,7 +860,7 @@ export default function WhatsAppAnalyzer() {
 
     // Datos para tendencias por día de la semana
     const dailyData =
-      analysisData.trendsData
+      data.trendsData
         ?.filter((trend: any) => trend.Tipo === "Día Semana")
         .map((trend: any) => ({
           dia: trend.Periodo,
@@ -821,25 +871,23 @@ export default function WhatsAppAnalyzer() {
     const difficultyData = [
       {
         name: "Fácil (0-1)",
-        value: analysisData.clientsData?.filter((c: any) => c["Puntuación Dificultad"] <= 1).length || 0,
+        value: data.clientsData?.filter((c: any) => c["Puntuación Dificultad"] <= 1).length || 0,
       },
       {
         name: "Moderado (2-3)",
         value:
-          analysisData.clientsData?.filter(
-            (c: any) => c["Puntuación Dificultad"] >= 2 && c["Puntuación Dificultad"] <= 3,
-          ).length || 0,
+          data.clientsData?.filter((c: any) => c["Puntuación Dificultad"] >= 2 && c["Puntuación Dificultad"] <= 3)
+            .length || 0,
       },
       {
         name: "Difícil (4-5)",
         value:
-          analysisData.clientsData?.filter(
-            (c: any) => c["Puntuación Dificultad"] >= 4 && c["Puntuación Dificultad"] <= 5,
-          ).length || 0,
+          data.clientsData?.filter((c: any) => c["Puntuación Dificultad"] >= 4 && c["Puntuación Dificultad"] <= 5)
+            .length || 0,
       },
       {
         name: "Muy Difícil (6+)",
-        value: analysisData.clientsData?.filter((c: any) => c["Puntuación Dificultad"] >= 6).length || 0,
+        value: data.clientsData?.filter((c: any) => c["Puntuación Dificultad"] >= 6).length || 0,
       },
     ]
 
@@ -847,15 +895,15 @@ export default function WhatsAppAnalyzer() {
     const riskData = [
       {
         name: "Bajo Riesgo",
-        value: analysisData.clientsData?.filter((c: any) => c["Nivel de Riesgo"] === "low").length || 0,
+        value: data.clientsData?.filter((c: any) => c["Nivel de Riesgo"] === "low").length || 0,
       },
       {
         name: "Riesgo Medio",
-        value: analysisData.clientsData?.filter((c: any) => c["Nivel de Riesgo"] === "medium").length || 0,
+        value: data.clientsData?.filter((c: any) => c["Nivel de Riesgo"] === "medium").length || 0,
       },
       {
         name: "Alto Riesgo",
-        value: analysisData.clientsData?.filter((c: any) => c["Nivel de Riesgo"] === "high").length || 0,
+        value: data.clientsData?.filter((c: any) => c["Nivel de Riesgo"] === "high").length || 0,
       },
     ]
 
@@ -869,22 +917,14 @@ export default function WhatsAppAnalyzer() {
     }
   }
 
-  const prepareClientChartData = (client: any, analysisData: any) => {
+  const prepareClientChartData = (client: any, data: any) => {
     // Historial de pedidos del cliente
-    const clientOrders =
-      analysisData.ordersData?.filter((order: any) => order.Cliente === client["Nombre Cliente"]) || []
+    const clientOrders = data.ordersData?.filter((order: any) => order.Cliente === client["Nombre Cliente"]) || []
 
     // Agrupar pedidos por mes
     const monthlyOrders = clientOrders.reduce((acc: any, order: any) => {
-      let date
-      try {
-        // Usar parse para un parseo más robusto de fechas
-        date = parse(order.Fecha, "dd/MM/yyyy", new Date())
-      } catch (error) {
-        console.warn("Error parsing date:", order.Fecha)
-        date = new Date() // Fecha actual como fallback
-      }
-
+      // Ahora order.Fecha ya es un objeto Date válido
+      const date = order.Fecha
       const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
 
       if (!acc[monthKey]) {
@@ -912,6 +952,21 @@ export default function WhatsAppAnalyzer() {
     return {
       monthlyData,
       clientProductData,
+    }
+  }
+
+  // Función para formatear fechas para mostrar en la UI
+  const formatDate = (date: Date) => {
+    if (!date) return "N/A"
+    try {
+      return date.toLocaleDateString("es-ES", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+      })
+    } catch (error) {
+      console.warn("Error al formatear fecha:", error)
+      return "Fecha inválida"
     }
   }
 
@@ -1020,675 +1075,938 @@ export default function WhatsAppAnalyzer() {
 
         {/* Results Section */}
         {analysisData && (
-          <Tabs defaultValue="overview" className="w-full">
-            <TabsList className="grid w-full grid-cols-8">
-              <TabsTrigger value="overview">Resumen General</TabsTrigger>
-              <TabsTrigger value="visualizations">Visualizaciones</TabsTrigger>
-              <TabsTrigger value="clients">Todos los Clientes</TabsTrigger>
-              <TabsTrigger value="individual">Análisis Individual</TabsTrigger>
-              <TabsTrigger value="gpt-insights">Insights IA</TabsTrigger>
-              <TabsTrigger value="products">Productos</TabsTrigger>
-              <TabsTrigger value="trends">Tendencias</TabsTrigger>
-              <TabsTrigger value="export">Exportar</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="overview" className="space-y-4">
-              {/* Métricas principales */}
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                <Card>
-                  <CardContent className="p-6">
-                    <div className="flex items-center space-x-2">
-                      <Users className="h-4 w-4 text-blue-600" />
-                      <div>
-                        <p className="text-2xl font-bold">{analysisData.totalClients || 0}</p>
-                        <p className="text-sm text-muted-foreground">Clientes Únicos</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardContent className="p-6">
-                    <div className="flex items-center space-x-2">
-                      <BarChart3 className="h-4 w-4 text-green-600" />
-                      <div>
-                        <p className="text-2xl font-bold">{analysisData.totalSpecificOrders || 0}</p>
-                        <p className="text-sm text-muted-foreground">Pedidos Específicos</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardContent className="p-6">
-                    <div className="flex items-center space-x-2">
-                      <BarChart3 className="h-4 w-4 text-blue-600" />
-                      <div>
-                        <p className="text-2xl font-bold">{analysisData.totalGeneralOrders || 0}</p>
-                        <p className="text-sm text-muted-foreground">Pedidos Generales</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardContent className="p-6">
-                    <div className="flex items-center space-x-2">
-                      <TrendingUp className="h-4 w-4 text-purple-600" />
-                      <div>
-                        <p className="text-2xl font-bold">{analysisData.totalSpecificPieces || 0}</p>
-                        <p className="text-sm text-muted-foreground">Piezas Específicas</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardContent className="p-6">
-                    <div className="flex items-center space-x-2">
-                      <TrendingUp className="h-4 w-4 text-orange-600" />
-                      <div>
-                        <p className="text-2xl font-bold">{analysisData.totalGeneralPieces || 0}</p>
-                        <p className="text-sm text-muted-foreground">Piezas Generales</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-
-              {/* Análisis general del negocio */}
+          <>
+            {!cleanedData ? (
               <Card>
-                <CardHeader>
-                  <CardTitle>📊 Análisis General del Negocio</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div>
-                      <h4 className="font-semibold mb-3 text-blue-600">Rendimiento de Clientes</h4>
-                      <div className="space-y-2 text-sm">
-                        <div className="flex justify-between">
-                          <span>Clientes frecuentes (&gt;4 pedidos/semana):</span>
-                          <Badge variant="default">
-                            {analysisData.clientsData?.filter((c: any) => c["Frecuencia Semanal"] > 4).length || 0}
-                          </Badge>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Clientes de alto valor (&gt;$50k):</span>
-                          <Badge variant="secondary">
-                            {analysisData.clientsData?.filter((c: any) => c["Total Gastado"] > 50000).length || 0}
-                          </Badge>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Clientes con problemas de pago:</span>
-                          <Badge variant="destructive">
-                            {analysisData.clientsData?.filter((c: any) => c["Problemas Pago"] > 0).length || 0}
-                          </Badge>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div>
-                      <h4 className="font-semibold mb-3 text-green-600">Satisfacción y Comunicación</h4>
-                      <div className="space-y-2 text-sm">
-                        <div className="flex justify-between">
-                          <span>Clientes satisfechos:</span>
-                          <Badge variant="default">
-                            {analysisData.clientsData?.filter((c: any) => c["Puntuación Satisfacción"] > 0).length || 0}
-                          </Badge>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Respuesta lenta (&gt;4h):</span>
-                          <Badge variant="outline">
-                            {analysisData.clientsData?.filter((c: any) => c["Tiempo Respuesta (hrs)"] > 4).length || 0}
-                          </Badge>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Clientes difíciles (score &gt;4):</span>
-                          <Badge variant="secondary">
-                            {analysisData.clientsData?.filter((c: any) => c["Puntuación Dificultad"] > 4).length || 0}
-                          </Badge>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div>
-                      <h4 className="font-semibold mb-3 text-purple-600">Métricas de Negocio</h4>
-                      <div className="space-y-2 text-sm">
-                        <div className="flex justify-between">
-                          <span>Ingresos totales estimados:</span>
-                          <Badge variant="default">
-                            $
-                            {analysisData.clientsData
-                              ?.reduce((sum: number, c: any) => sum + (c["Total Gastado"] || 0), 0)
-                              .toLocaleString()}
-                          </Badge>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Valor promedio por cliente:</span>
-                          <Badge variant="secondary">
-                            $
-                            {Math.round(
-                              analysisData.clientsData?.reduce(
-                                (sum: number, c: any) => sum + (c["Total Gastado"] || 0),
-                                0,
-                              ) / (analysisData.totalClients || 1),
-                            ).toLocaleString()}
-                          </Badge>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Pedidos promedio por cliente:</span>
-                          <Badge variant="outline">
-                            {Math.round(((analysisData.totalOrders || 0) / (analysisData.totalClients || 1)) * 10) / 10}
-                          </Badge>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                <CardContent className="p-6 text-center">
+                  <p>Procesando y validando datos...</p>
                 </CardContent>
               </Card>
+            ) : (
+              <Tabs defaultValue="overview" className="w-full">
+                <TabsList className="grid w-full grid-cols-8">
+                  <TabsTrigger value="overview">Resumen General</TabsTrigger>
+                  <TabsTrigger value="visualizations">Visualizaciones</TabsTrigger>
+                  <TabsTrigger value="clients">Todos los Clientes</TabsTrigger>
+                  <TabsTrigger value="individual">Análisis Individual</TabsTrigger>
+                  <TabsTrigger value="gpt-insights">Insights IA</TabsTrigger>
+                  <TabsTrigger value="products">Productos</TabsTrigger>
+                  <TabsTrigger value="trends">Tendencias</TabsTrigger>
+                  <TabsTrigger value="export">Exportar</TabsTrigger>
+                </TabsList>
 
-              {/* Desglose por Tipo de Pedido */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>📊 Desglose por Tipo de Pedido</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                      <h4 className="font-semibold mb-3 text-green-600">Pedidos Específicos</h4>
-                      <div className="space-y-3">
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm">Total de pedidos específicos:</span>
-                          <Badge variant="default">{analysisData.totalSpecificOrders || 0}</Badge>
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm">Porcentaje del total:</span>
-                          <Badge variant="secondary">
-                            {analysisData.totalOrders > 0
-                              ? Math.round(((analysisData.totalSpecificOrders || 0) / analysisData.totalOrders) * 100)
-                              : 0}
-                            %
-                          </Badge>
-                        </div>
-                        <Progress
-                          value={
-                            analysisData.totalOrders > 0
-                              ? ((analysisData.totalSpecificOrders || 0) / analysisData.totalOrders) * 100
-                              : 0
-                          }
-                          className="h-2"
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          Productos específicos como donas, conchas, pastelitos, etc.
-                        </p>
-                      </div>
-                    </div>
-
-                    <div>
-                      <h4 className="font-semibold mb-3 text-blue-600">Pedidos Generales</h4>
-                      <div className="space-y-3">
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm">Total de pedidos generales:</span>
-                          <Badge variant="default">{analysisData.totalGeneralOrders || 0}</Badge>
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm">Porcentaje del total:</span>
-                          <Badge variant="secondary">
-                            {analysisData.totalOrders > 0
-                              ? Math.round(((analysisData.totalGeneralOrders || 0) / analysisData.totalOrders) * 100)
-                              : 0}
-                            %
-                          </Badge>
-                        </div>
-                        <Progress
-                          value={
-                            analysisData.totalOrders > 0
-                              ? ((analysisData.totalGeneralOrders || 0) / analysisData.totalOrders) * 100
-                              : 0
-                          }
-                          className="h-2"
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          Pedidos de "piezas", "surtido" o "panes" sin especificar producto.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-6 p-4 bg-muted rounded-lg">
-                    <h4 className="font-semibold mb-2">💡 Insights de Categorización:</h4>
-                    <ul className="text-sm space-y-1">
-                      <li>
-                        • <strong>Ratio Específico/General:</strong>{" "}
-                        {analysisData.totalGeneralOrders > 0
-                          ? Math.round(
-                              ((analysisData.totalSpecificOrders || 0) / (analysisData.totalGeneralOrders || 1)) * 100,
-                            ) / 100
-                          : "N/A"}
-                      </li>
-                      <li>
-                        • <strong>Piezas promedio por pedido específico:</strong>{" "}
-                        {analysisData.totalSpecificOrders > 0
-                          ? Math.round(
-                              ((analysisData.totalSpecificPieces || 0) / (analysisData.totalSpecificOrders || 1)) * 10,
-                            ) / 10
-                          : 0}
-                      </li>
-                      <li>
-                        • <strong>Piezas promedio por pedido general:</strong>{" "}
-                        {analysisData.totalGeneralOrders > 0
-                          ? Math.round(
-                              ((analysisData.totalGeneralPieces || 0) / (analysisData.totalGeneralOrders || 1)) * 10,
-                            ) / 10
-                          : 0}
-                      </li>
-                    </ul>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Top insights */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Star className="h-5 w-5 text-yellow-500" />
-                      Top 5 Mejores Clientes
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {analysisData.clientsData?.slice(0, 5).map((client: any, index: number) => (
-                      <div key={index} className="flex justify-between items-center py-2 border-b last:border-b-0">
-                        <div>
-                          <p className="font-medium">{client["Nombre Cliente"]}</p>
-                          <p className="text-sm text-muted-foreground">
-                            ${client["Total Gastado"]?.toLocaleString()} • {client["Total Pedidos"]} pedidos
-                          </p>
-                        </div>
-                        {getDifficultyBadge(client["Puntuación Dificultad"])}
-                      </div>
-                    ))}
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <AlertTriangle className="h-5 w-5 text-red-500" />
-                      Productos Más Populares
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {analysisData.productsData?.slice(0, 5).map((product: any, index: number) => (
-                      <div key={index} className="flex justify-between items-center py-2 border-b last:border-b-0">
-                        <div>
-                          <p className="font-medium">{product.Producto}</p>
-                          <p className="text-sm text-muted-foreground">{product["Total Pedidos"]} menciones</p>
-                        </div>
-                        {getPopularityBadge(product.Popularidad)}
-                      </div>
-                    ))}
-                  </CardContent>
-                </Card>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="visualizations" className="space-y-6">
-              {(() => {
-                if (!analysisData) {
-                  return (
+                <TabsContent value="overview" className="space-y-4">
+                  {/* Métricas principales */}
+                  <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                     <Card>
-                      <CardContent className="p-6 text-center">
-                        <p>No hay datos para visualizar</p>
+                      <CardContent className="p-6">
+                        <div className="flex items-center space-x-2">
+                          <Users className="h-4 w-4 text-blue-600" />
+                          <div>
+                            <p className="text-2xl font-bold">{cleanedData.totalClients || 0}</p>
+                            <p className="text-sm text-muted-foreground">Clientes Únicos</p>
+                          </div>
+                        </div>
                       </CardContent>
                     </Card>
-                  )
-                }
 
-                if (!chartData) {
-                  return (
                     <Card>
-                      <CardContent className="p-6 text-center">
-                        <p>Procesando visualizaciones...</p>
+                      <CardContent className="p-6">
+                        <div className="flex items-center space-x-2">
+                          <BarChart3 className="h-4 w-4 text-green-600" />
+                          <div>
+                            <p className="text-2xl font-bold">{cleanedData.totalSpecificOrders || 0}</p>
+                            <p className="text-sm text-muted-foreground">Pedidos Específicos</p>
+                          </div>
+                        </div>
                       </CardContent>
                     </Card>
-                  )
-                }
 
-                return (
-                  <>
-                    {/* Título y explicación */}
+                    <Card>
+                      <CardContent className="p-6">
+                        <div className="flex items-center space-x-2">
+                          <BarChart3 className="h-4 w-4 text-blue-600" />
+                          <div>
+                            <p className="text-2xl font-bold">{cleanedData.totalGeneralOrders || 0}</p>
+                            <p className="text-sm text-muted-foreground">Pedidos Generales</p>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    <Card>
+                      <CardContent className="p-6">
+                        <div className="flex items-center space-x-2">
+                          <TrendingUp className="h-4 w-4 text-purple-600" />
+                          <div>
+                            <p className="text-2xl font-bold">{cleanedData.totalSpecificPieces || 0}</p>
+                            <p className="text-sm text-muted-foreground">Piezas Específicas</p>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    <Card>
+                      <CardContent className="p-6">
+                        <div className="flex items-center space-x-2">
+                          <TrendingUp className="h-4 w-4 text-orange-600" />
+                          <div>
+                            <p className="text-2xl font-bold">{cleanedData.totalGeneralPieces || 0}</p>
+                            <p className="text-sm text-muted-foreground">Piezas Generales</p>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+
+                  {/* Análisis general del negocio */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>📊 Análisis General del Negocio</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div>
+                          <h4 className="font-semibold mb-3 text-blue-600">Rendimiento de Clientes</h4>
+                          <div className="space-y-2 text-sm">
+                            <div className="flex justify-between">
+                              <span>Clientes frecuentes (&gt;4 pedidos/semana):</span>
+                              <Badge variant="default">
+                                {cleanedData.clientsData?.filter((c: any) => c["Frecuencia Semanal"] > 4).length || 0}
+                              </Badge>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Clientes de alto valor (&gt;$50k):</span>
+                              <Badge variant="secondary">
+                                {cleanedData.clientsData?.filter((c: any) => c["Total Gastado"] > 50000).length || 0}
+                              </Badge>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Clientes con problemas de pago:</span>
+                              <Badge variant="destructive">
+                                {cleanedData.clientsData?.filter((c: any) => c["Problemas Pago"] > 0).length || 0}
+                              </Badge>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <h4 className="font-semibold mb-3 text-green-600">Satisfacción y Comunicación</h4>
+                          <div className="space-y-2 text-sm">
+                            <div className="flex justify-between">
+                              <span>Clientes satisfechos:</span>
+                              <Badge variant="default">
+                                {cleanedData.clientsData?.filter((c: any) => c["Puntuación Satisfacción"] > 0).length ||
+                                  0}
+                              </Badge>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Respuesta lenta (&gt;4h):</span>
+                              <Badge variant="outline">
+                                {cleanedData.clientsData?.filter((c: any) => c["Tiempo Respuesta (hrs)"] > 4).length ||
+                                  0}
+                              </Badge>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Clientes difíciles (score &gt;4):</span>
+                              <Badge variant="secondary">
+                                {cleanedData.clientsData?.filter((c: any) => c["Puntuación Dificultad"] > 4).length ||
+                                  0}
+                              </Badge>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <h4 className="font-semibold mb-3 text-purple-600">Métricas de Negocio</h4>
+                          <div className="space-y-2 text-sm">
+                            <div className="flex justify-between">
+                              <span>Ingresos totales estimados:</span>
+                              <Badge variant="default">
+                                $
+                                {cleanedData.clientsData
+                                  ?.reduce((sum: number, c: any) => sum + (c["Total Gastado"] || 0), 0)
+                                  .toLocaleString()}
+                              </Badge>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Valor promedio por cliente:</span>
+                              <Badge variant="secondary">
+                                $
+                                {Math.round(
+                                  cleanedData.clientsData?.reduce(
+                                    (sum: number, c: any) => sum + (c["Total Gastado"] || 0),
+                                    0,
+                                  ) / (cleanedData.totalClients || 1),
+                                ).toLocaleString()}
+                              </Badge>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Pedidos promedio por cliente:</span>
+                              <Badge variant="outline">
+                                {Math.round(((cleanedData.totalOrders || 0) / (cleanedData.totalClients || 1)) * 10) /
+                                  10}
+                              </Badge>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* Desglose por Tipo de Pedido */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>📊 Desglose por Tipo de Pedido</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                          <h4 className="font-semibold mb-3 text-green-600">Pedidos Específicos</h4>
+                          <div className="space-y-3">
+                            <div className="flex justify-between items-center">
+                              <span className="text-sm">Total de pedidos específicos:</span>
+                              <Badge variant="default">{cleanedData.totalSpecificOrders || 0}</Badge>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="text-sm">Porcentaje del total:</span>
+                              <Badge variant="secondary">
+                                {cleanedData.totalOrders > 0
+                                  ? Math.round(((cleanedData.totalSpecificOrders || 0) / cleanedData.totalOrders) * 100)
+                                  : 0}
+                                %
+                              </Badge>
+                            </div>
+                            <Progress
+                              value={
+                                cleanedData.totalOrders > 0
+                                  ? ((cleanedData.totalSpecificOrders || 0) / cleanedData.totalOrders) * 100
+                                  : 0
+                              }
+                              className="h-2"
+                            />
+                            <p className="text-xs text-muted-foreground">
+                              Productos específicos como donas, conchas, pastelitos, etc.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div>
+                          <h4 className="font-semibold mb-3 text-blue-600">Pedidos Generales</h4>
+                          <div className="space-y-3">
+                            <div className="flex justify-between items-center">
+                              <span className="text-sm">Total de pedidos generales:</span>
+                              <Badge variant="default">{cleanedData.totalGeneralOrders || 0}</Badge>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="text-sm">Porcentaje del total:</span>
+                              <Badge variant="secondary">
+                                {cleanedData.totalOrders > 0
+                                  ? Math.round(((cleanedData.totalGeneralOrders || 0) / cleanedData.totalOrders) * 100)
+                                  : 0}
+                                %
+                              </Badge>
+                            </div>
+                            <Progress
+                              value={
+                                cleanedData.totalOrders > 0
+                                  ? ((cleanedData.totalGeneralOrders || 0) / cleanedData.totalOrders) * 100
+                                  : 0
+                              }
+                              className="h-2"
+                            />
+                            <p className="text-xs text-muted-foreground">
+                              Pedidos de "piezas", "surtido" o "panes" sin especificar producto.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-6 p-4 bg-muted rounded-lg">
+                        <h4 className="font-semibold mb-2">💡 Insights de Categorización:</h4>
+                        <ul className="text-sm space-y-1">
+                          <li>
+                            • <strong>Ratio Específico/General:</strong>{" "}
+                            {cleanedData.totalGeneralOrders > 0
+                              ? Math.round(
+                                  ((cleanedData.totalSpecificOrders || 0) / (cleanedData.totalGeneralOrders || 1)) *
+                                    100,
+                                ) / 100
+                              : "N/A"}
+                          </li>
+                          <li>
+                            • <strong>Piezas promedio por pedido específico:</strong>{" "}
+                            {cleanedData.totalSpecificOrders > 0
+                              ? Math.round(
+                                  ((cleanedData.totalSpecificPieces || 0) / (cleanedData.totalSpecificOrders || 1)) *
+                                    10,
+                                ) / 10
+                              : 0}
+                          </li>
+                          <li>
+                            • <strong>Piezas promedio por pedido general:</strong>{" "}
+                            {cleanedData.totalGeneralOrders > 0
+                              ? Math.round(
+                                  ((cleanedData.totalGeneralPieces || 0) / (cleanedData.totalGeneralOrders || 1)) * 10,
+                                ) / 10
+                              : 0}
+                          </li>
+                        </ul>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* Top insights */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <Card>
                       <CardHeader>
                         <CardTitle className="flex items-center gap-2">
-                          📊 Panel de Visualizaciones para Decisiones de Producción
+                          <Star className="h-5 w-5 text-yellow-500" />
+                          Top 5 Mejores Clientes
                         </CardTitle>
                       </CardHeader>
                       <CardContent>
-                        <p className="text-muted-foreground">
-                          Estas visualizaciones te ayudan a tomar decisiones informadas sobre qué productos producir,
-                          cuándo producir más, y cómo optimizar tu operación basándote en datos reales de tus clientes.
-                        </p>
+                        {cleanedData.clientsData?.slice(0, 5).map((client: any, index: number) => (
+                          <div key={index} className="flex justify-between items-center py-2 border-b last:border-b-0">
+                            <div>
+                              <p className="font-medium">{client["Nombre Cliente"]}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {client["Total Pedidos"]} pedidos · {client["Frecuencia Semanal"]} pedidos/semana
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className="font-bold">${client["Total Gastado"]?.toLocaleString()}</p>
+                              <p className="text-xs text-muted-foreground">
+                                Último pedido: {formatDate(client["Último Pedido"])}
+                              </p>
+                            </div>
+                          </div>
+                        ))}
                       </CardContent>
                     </Card>
 
-                    {/* Gráficos principales */}
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                      {/* Productos más demandados */}
-                      <Card>
-                        <CardHeader>
-                          <CardTitle>🥖 Productos Más Demandados</CardTitle>
-                          <p className="text-sm text-muted-foreground">
-                            Prioriza la producción de estos productos para maximizar ventas
-                          </p>
-                        </CardHeader>
-                        <CardContent>
-                          <ResponsiveContainer width="100%" height={300}>
-                            <BarChart data={chartData.productChartData}>
-                              <CartesianGrid strokeDasharray="3 3" />
-                              <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} />
-                              <YAxis />
-                              <Tooltip />
-                              <Bar dataKey="cantidad" fill="#8884d8" />
-                            </BarChart>
-                          </ResponsiveContainer>
-                        </CardContent>
-                      </Card>
-
-                      {/* Distribución de productos (Pie) */}
-                      <Card>
-                        <CardHeader>
-                          <CardTitle>📈 Distribución de Demanda por Producto</CardTitle>
-                          <p className="text-sm text-muted-foreground">
-                            Porcentaje de participación de cada producto en el total de pedidos
-                          </p>
-                        </CardHeader>
-                        <CardContent>
-                          <ResponsiveContainer width="100%" height={300}>
-                            <PieChart>
-                              <Pie
-                                data={chartData.productChartData}
-                                cx="50%"
-                                cy="50%"
-                                labelLine={false}
-                                label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
-                                outerRadius={80}
-                                fill="#8884d8"
-                                dataKey="cantidad"
-                              >
-                                {chartData.productChartData.map((entry: any, index: number) => (
-                                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                ))}
-                              </Pie>
-                              <Tooltip />
-                            </PieChart>
-                          </ResponsiveContainer>
-                        </CardContent>
-                      </Card>
-
-                      {/* Clientes por valor */}
-                      <Card>
-                        <CardHeader>
-                          <CardTitle>💰 Top 10 Clientes por Valor</CardTitle>
-                          <p className="text-sm text-muted-foreground">
-                            Identifica tus clientes más valiosos para atención prioritaria
-                          </p>
-                        </CardHeader>
-                        <CardContent>
-                          <ResponsiveContainer width="100%" height={300}>
-                            <BarChart data={chartData.clientValueData} layout="horizontal">
-                              <CartesianGrid strokeDasharray="3 3" />
-                              <XAxis type="number" />
-                              <YAxis dataKey="name" type="category" width={100} />
-                              <Tooltip formatter={(value) => [`$${Number(value).toLocaleString()}`, "Valor Total"]} />
-                              <Bar dataKey="valor" fill="#00C49F" />
-                            </BarChart>
-                          </ResponsiveContainer>
-                        </CardContent>
-                      </Card>
-
-                      {/* Actividad por hora */}
-                      <Card>
-                        <CardHeader>
-                          <CardTitle>⏰ Actividad por Hora del Día</CardTitle>
-                          <p className="text-sm text-muted-foreground">
-                            Optimiza horarios de producción y atención al cliente
-                          </p>
-                        </CardHeader>
-                        <CardContent>
-                          <ResponsiveContainer width="100%" height={300}>
-                            <AreaChart data={chartData.hourlyData}>
-                              <CartesianGrid strokeDasharray="3 3" />
-                              <XAxis dataKey="hora" />
-                              <YAxis />
-                              <Tooltip />
-                              <Area
-                                type="monotone"
-                                dataKey="actividad"
-                                stroke="#FFBB28"
-                                fill="#FFBB28"
-                                fillOpacity={0.6}
-                              />
-                            </AreaChart>
-                          </ResponsiveContainer>
-                        </CardContent>
-                      </Card>
-
-                      {/* Actividad por día de la semana */}
-                      <Card>
-                        <CardHeader>
-                          <CardTitle>📅 Actividad por Día de la Semana</CardTitle>
-                          <p className="text-sm text-muted-foreground">
-                            Planifica producción semanal basada en demanda histórica
-                          </p>
-                        </CardHeader>
-                        <CardContent>
-                          <ResponsiveContainer width="100%" height={300}>
-                            <BarChart data={chartData.dailyData}>
-                              <CartesianGrid strokeDasharray="3 3" />
-                              <XAxis dataKey="dia" />
-                              <YAxis />
-                              <Tooltip />
-                              <Bar dataKey="actividad" fill="#FF8042" />
-                            </BarChart>
-                          </ResponsiveContainer>
-                        </CardContent>
-                      </Card>
-
-                      {/* Distribución de dificultad de clientes */}
-                      <Card>
-                        <CardHeader>
-                          <CardTitle>😤 Distribución de Dificultad de Clientes</CardTitle>
-                          <p className="text-sm text-muted-foreground">
-                            Identifica qué porcentaje de clientes requiere atención especial
-                          </p>
-                        </CardHeader>
-                        <CardContent>
-                          <ResponsiveContainer width="100%" height={300}>
-                            <PieChart>
-                              <Pie
-                                data={chartData.difficultyData}
-                                cx="50%"
-                                cy="50%"
-                                labelLine={false}
-                                label={({ name, value }) => `${name}: ${value}`}
-                                outerRadius={80}
-                                fill="#8884d8"
-                                dataKey="value"
-                              >
-                                {chartData.difficultyData.map((entry: any, index: number) => (
-                                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                ))}
-                              </Pie>
-                              <Tooltip />
-                            </PieChart>
-                          </ResponsiveContainer>
-                        </CardContent>
-                      </Card>
-                    </div>
-
-                    {/* Insights de producción */}
                     <Card>
                       <CardHeader>
-                        <CardTitle>🎯 Insights para Decisiones de Producción</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                          <div className="p-4 bg-blue-50 rounded-lg">
-                            <h4 className="font-semibold text-blue-800 mb-2">📦 Productos Prioritarios</h4>
-                            <ul className="text-sm space-y-1">
-                              {chartData.productChartData.slice(0, 3).map((product: any, index: number) => (
-                                <li key={index}>
-                                  • {product.name} ({product.cantidad} pedidos)
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-
-                          <div className="p-4 bg-green-50 rounded-lg">
-                            <h4 className="font-semibold text-green-800 mb-2">⏰ Horarios Pico</h4>
-                            <ul className="text-sm space-y-1">
-                              {chartData.hourlyData
-                                .sort((a: any, b: any) => b.actividad - a.actividad)
-                                .slice(0, 3)
-                                .map((hour: any, index: number) => (
-                                  <li key={index}>
-                                    • {hour.hora} ({hour.actividad} mensajes)
-                                  </li>
-                                ))}
-                            </ul>
-                          </div>
-
-                          <div className="p-4 bg-yellow-50 rounded-lg">
-                            <h4 className="font-semibold text-yellow-800 mb-2">📈 Días de Mayor Demanda</h4>
-                            <ul className="text-sm space-y-1">
-                              {chartData.dailyData
-                                .sort((a: any, b: any) => b.actividad - a.actividad)
-                                .slice(0, 3)
-                                .map((day: any, index: number) => (
-                                  <li key={index}>
-                                    • {day.dia} ({day.actividad} mensajes)
-                                  </li>
-                                ))}
-                            </ul>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </>
-                )
-              })()}
-            </TabsContent>
-
-            <TabsContent value="clients">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Análisis Completo de Todos los Clientes</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Cliente</TableHead>
-                          <TableHead>Pedidos</TableHead>
-                          <TableHead>Total Gastado</TableHead>
-                          <TableHead>Prom. Piezas</TableHead>
-                          <TableHead>Frecuencia</TableHead>
-                          <TableHead>Tiempo Resp.</TableHead>
-                          <TableHead>Dificultad</TableHead>
-                          <TableHead>Satisfacción</TableHead>
-                          <TableHead>Segmento</TableHead>
-                          <TableHead>Riesgo</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {analysisData.clientsData?.map((client: any, index: number) => (
-                          <TableRow key={index}>
-                            <TableCell className="font-medium">{client["Nombre Cliente"]}</TableCell>
-                            <TableCell>{client["Total Pedidos"]}</TableCell>
-                            <TableCell>${client["Total Gastado"]?.toLocaleString()}</TableCell>
-                            <TableCell>{client["Promedio Piezas/Pedido"]}</TableCell>
-                            <TableCell>{client["Frecuencia Semanal"]}/sem</TableCell>
-                            <TableCell>{client["Tiempo Respuesta (hrs)"]}h</TableCell>
-                            <TableCell>{getDifficultyBadge(client["Puntuación Dificultad"])}</TableCell>
-                            <TableCell>
-                              <Badge variant={client["Puntuación Satisfacción"] > 0 ? "default" : "destructive"}>
-                                {client["Puntuación Satisfacción"]}
-                              </Badge>
-                            </TableCell>
-                            <TableCell>{getSegmentBadge(client["Segmento"] || "Regular")}</TableCell>
-                            <TableCell>{getChurnRiskBadge(client["Riesgo de Abandono"] || "Bajo")}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="individual">
-              <div className="space-y-6">
-                {analysisData.clientsData?.map((client: any, index: number) => {
-                  const clientChartData = prepareClientChartData(client, analysisData)
-                  return (
-                    <Card key={index}>
-                      <CardHeader>
-                        <CardTitle className="flex items-center justify-between">
-                          <span>{client["Nombre Cliente"]}</span>
-                          <div className="flex gap-2">
-                            {getSegmentBadge(client["Segmento"] || "Regular")}
-                            {getChurnRiskBadge(client["Riesgo de Abandono"] || "Bajo")}
-                            {getDifficultyBadge(client["Puntuación Dificultad"])}
-                            {getRiskBadge(client["Nivel de Riesgo"] || "low")}
-                            <Badge variant={client["Puntuación Satisfacción"] > 0 ? "default" : "destructive"}>
-                              Satisfacción: {client["Puntuación Satisfacción"]}
-                            </Badge>
-                          </div>
+                        <CardTitle className="flex items-center gap-2">
+                          <AlertTriangle className="h-5 w-5 text-red-500" />
+                          Top 5 Clientes en Riesgo
                         </CardTitle>
                       </CardHeader>
                       <CardContent>
-                        {/* Visualizaciones del cliente */}
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                          {/* Evolución temporal del cliente */}
-                          <Card>
-                            <CardHeader>
-                              <CardTitle className="text-lg">📈 Evolución de Pedidos</CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                              <ResponsiveContainer width="100%" height={200}>
-                                <LineChart data={clientChartData.monthlyData}>
-                                  <CartesianGrid strokeDasharray="3 3" />
-                                  <XAxis dataKey="month" />
-                                  <YAxis />
-                                  <Line type="monotone" dataKey="pedidos" stroke="#8884d8" strokeWidth={2} />
-                                  <Line type="monotone" dataKey="piezas" stroke="#82ca9d" strokeWidth={2} />
-                                </LineChart>
-                              </ResponsiveContainer>
-                            </CardContent>
-                          </Card>
+                        {predictiveAnalysis?.churnRisk?.slice(0, 5).map((client: any, index: number) => (
+                          <div key={index} className="flex justify-between items-center py-2 border-b last:border-b-0">
+                            <div>
+                              <p className="font-medium">{client.client}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {client.daysSinceLastOrder} días sin pedidos · {client.reasons.join(", ")}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              {getRiskBadge(client.riskLevel)}
+                              <p className="text-xs text-muted-foreground mt-1">{client.recommendation}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </CardContent>
+                    </Card>
+                  </div>
+                </TabsContent>
 
-                          {/* Productos preferidos del cliente */}
+                <TabsContent value="visualizations" className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Gráfico de productos más populares */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Productos Más Populares</CardTitle>
+                      </CardHeader>
+                      <CardContent className="h-80">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={chartData?.productChartData || []}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="name" />
+                            <YAxis />
+                            <Tooltip />
+                            <Bar dataKey="cantidad" fill="#8884d8" />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </CardContent>
+                    </Card>
+
+                    {/* Gráfico de clientes por valor */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Top Clientes por Valor</CardTitle>
+                      </CardHeader>
+                      <CardContent className="h-80">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={chartData?.clientValueData || []}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="name" />
+                            <YAxis />
+                            <Tooltip />
+                            <Bar dataKey="valor" fill="#82ca9d" />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </CardContent>
+                    </Card>
+
+                    {/* Gráfico de tendencias horarias */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Tendencias Horarias</CardTitle>
+                      </CardHeader>
+                      <CardContent className="h-80">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={chartData?.hourlyData || []}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="hora" />
+                            <YAxis />
+                            <Tooltip />
+                            <Line type="monotone" dataKey="actividad" stroke="#8884d8" />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </CardContent>
+                    </Card>
+
+                    {/* Gráfico de tendencias por día */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Tendencias por Día</CardTitle>
+                      </CardHeader>
+                      <CardContent className="h-80">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={chartData?.dailyData || []}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="dia" />
+                            <YAxis />
+                            <Tooltip />
+                            <Bar dataKey="actividad" fill="#ffc658" />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </CardContent>
+                    </Card>
+
+                    {/* Gráfico de distribución de dificultad */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Distribución de Dificultad</CardTitle>
+                      </CardHeader>
+                      <CardContent className="h-80">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={chartData?.difficultyData || []}
+                              cx="50%"
+                              cy="50%"
+                              labelLine={false}
+                              outerRadius={80}
+                              fill="#8884d8"
+                              dataKey="value"
+                              label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                            >
+                              {chartData?.difficultyData?.map((entry: any, index: number) => (
+                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                              ))}
+                            </Pie>
+                            <Tooltip />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </CardContent>
+                    </Card>
+
+                    {/* Gráfico de distribución de riesgo */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Distribución de Riesgo</CardTitle>
+                      </CardHeader>
+                      <CardContent className="h-80">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={chartData?.riskData || []}
+                              cx="50%"
+                              cy="50%"
+                              labelLine={false}
+                              outerRadius={80}
+                              fill="#8884d8"
+                              dataKey="value"
+                              label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                            >
+                              {chartData?.riskData?.map((entry: any, index: number) => (
+                                <Cell
+                                  key={`cell-${index}`}
+                                  fill={
+                                    entry.name === "Alto Riesgo"
+                                      ? "#ef4444"
+                                      : entry.name === "Riesgo Medio"
+                                        ? "#f59e0b"
+                                        : "#10b981"
+                                  }
+                                />
+                              ))}
+                            </Pie>
+                            <Tooltip />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </CardContent>
+                    </Card>
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="clients" className="space-y-4">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <Users className="h-5 w-5" />
+                        Todos los Clientes ({cleanedData.clientsData?.length || 0})
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="rounded-md border">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Cliente</TableHead>
+                              <TableHead>Total Gastado</TableHead>
+                              <TableHead>Pedidos</TableHead>
+                              <TableHead>Frecuencia</TableHead>
+                              <TableHead>Último Pedido</TableHead>
+                              <TableHead>Dificultad</TableHead>
+                              <TableHead>Segmento</TableHead>
+                              <TableHead>Riesgo</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {cleanedData.clientsData?.map((client: any, index: number) => (
+                              <TableRow key={index}>
+                                <TableCell className="font-medium">{client["Nombre Cliente"]}</TableCell>
+                                <TableCell>${client["Total Gastado"]?.toLocaleString()}</TableCell>
+                                <TableCell>{client["Total Pedidos"]}</TableCell>
+                                <TableCell>{client["Frecuencia Semanal"]} / semana</TableCell>
+                                <TableCell>{formatDate(client["Último Pedido"])}</TableCell>
+                                <TableCell>{getDifficultyBadge(client["Puntuación Dificultad"])}</TableCell>
+                                <TableCell>
+                                  {getSegmentBadge(
+                                    predictiveAnalysis?.clientSegments?.vip?.find(
+                                      (c: any) => c["Nombre Cliente"] === client["Nombre Cliente"],
+                                    )
+                                      ? "VIP"
+                                      : predictiveAnalysis?.clientSegments?.problematic?.find(
+                                            (c: any) => c["Nombre Cliente"] === client["Nombre Cliente"],
+                                          )
+                                        ? "En Riesgo"
+                                        : predictiveAnalysis?.clientSegments?.regular?.find(
+                                              (c: any) => c["Nombre Cliente"] === client["Nombre Cliente"],
+                                            )
+                                          ? "Regular"
+                                          : "Nuevo",
+                                  )}
+                                </TableCell>
+                                <TableCell>
+                                  {getChurnRiskBadge(
+                                    predictiveAnalysis?.churnRisk?.find(
+                                      (c: any) => c.client === client["Nombre Cliente"],
+                                    )?.riskLevel === "Alto"
+                                      ? "Alto"
+                                      : predictiveAnalysis?.churnRisk?.find(
+                                            (c: any) => c.client === client["Nombre Cliente"],
+                                          )?.riskLevel === "Medio"
+                                        ? "Medio"
+                                        : "Bajo",
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+
+                <TabsContent value="individual" className="space-y-4">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Análisis Individual de Clientes</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <Tabs defaultValue="client-0" className="w-full">
+                        <TabsList className="flex flex-wrap h-auto">
+                          {cleanedData.clientsData?.slice(0, 10).map((client: any, index: number) => (
+                            <TabsTrigger key={index} value={`client-${index}`} className="mb-1">
+                              {client["Nombre Cliente"]}
+                            </TabsTrigger>
+                          ))}
+                        </TabsList>
+
+                        {cleanedData.clientsData?.slice(0, 10).map((client: any, index: number) => {
+                          const clientChartData = prepareClientChartData(client, cleanedData)
+
+                          return (
+                            <TabsContent key={index} value={`client-${index}`} className="space-y-4">
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <Card>
+                                  <CardHeader className="pb-2">
+                                    <CardTitle className="text-lg">Información General</CardTitle>
+                                  </CardHeader>
+                                  <CardContent>
+                                    <div className="space-y-2">
+                                      <div className="flex justify-between">
+                                        <span className="text-sm font-medium">Total Gastado:</span>
+                                        <span>${client["Total Gastado"]?.toLocaleString()}</span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span className="text-sm font-medium">Total Pedidos:</span>
+                                        <span>{client["Total Pedidos"]}</span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span className="text-sm font-medium">Frecuencia:</span>
+                                        <span>{client["Frecuencia Semanal"]} pedidos/semana</span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span className="text-sm font-medium">Último Pedido:</span>
+                                        <span>{formatDate(client["Último Pedido"])}</span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span className="text-sm font-medium">Dificultad:</span>
+                                        <span>{getDifficultyBadge(client["Puntuación Dificultad"])}</span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span className="text-sm font-medium">Problemas de Pago:</span>
+                                        <span>{client["Problemas Pago"] || 0}</span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span className="text-sm font-medium">Satisfacción:</span>
+                                        <span>{client["Puntuación Satisfacción"] || 0}</span>
+                                      </div>
+                                    </div>
+                                  </CardContent>
+                                </Card>
+
+                                <Card>
+                                  <CardHeader className="pb-2">
+                                    <CardTitle className="text-lg">Productos Preferidos</CardTitle>
+                                  </CardHeader>
+                                  <CardContent className="h-60">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                      <PieChart>
+                                        <Pie
+                                          data={clientChartData.clientProductData || []}
+                                          cx="50%"
+                                          cy="50%"
+                                          labelLine={false}
+                                          outerRadius={60}
+                                          fill="#8884d8"
+                                          dataKey="cantidad"
+                                          label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                                        >
+                                          {clientChartData.clientProductData?.map((entry: any, i: number) => (
+                                            <Cell key={`cell-${i}`} fill={entry.color} />
+                                          ))}
+                                        </Pie>
+                                        <Tooltip />
+                                      </PieChart>
+                                    </ResponsiveContainer>
+                                  </CardContent>
+                                </Card>
+
+                                <Card>
+                                  <CardHeader className="pb-2">
+                                    <CardTitle className="text-lg">Análisis de Riesgo</CardTitle>
+                                  </CardHeader>
+                                  <CardContent>
+                                    <div className="space-y-4">
+                                      <div>
+                                        <div className="flex justify-between mb-1">
+                                          <span className="text-sm font-medium">Riesgo de Abandono:</span>
+                                          <span>
+                                            {getChurnRiskBadge(
+                                              predictiveAnalysis?.churnRisk?.find(
+                                                (c: any) => c.client === client["Nombre Cliente"],
+                                              )?.riskLevel === "Alto"
+                                                ? "Alto"
+                                                : predictiveAnalysis?.churnRisk?.find(
+                                                      (c: any) => c.client === client["Nombre Cliente"],
+                                                    )?.riskLevel === "Medio"
+                                                  ? "Medio"
+                                                  : "Bajo",
+                                            )}
+                                          </span>
+                                        </div>
+                                        <Progress
+                                          value={
+                                            predictiveAnalysis?.churnRisk?.find(
+                                              (c: any) => c.client === client["Nombre Cliente"],
+                                            )?.riskScore * 10 || 0
+                                          }
+                                          className="h-2"
+                                        />
+                                      </div>
+
+                                      <div>
+                                        <div className="flex justify-between mb-1">
+                                          <span className="text-sm font-medium">Valor de Vida del Cliente:</span>
+                                          <span>
+                                            $
+                                            {predictiveAnalysis?.recoveryAnalysis
+                                              ?.find((c: any) => c.client === client["Nombre Cliente"])
+                                              ?.predictedCLV?.toLocaleString() || "N/A"}
+                                          </span>
+                                        </div>
+                                      </div>
+
+                                      <div>
+                                        <div className="flex justify-between mb-1">
+                                          <span className="text-sm font-medium">Segmento:</span>
+                                          <span>
+                                            {getSegmentBadge(
+                                              predictiveAnalysis?.clientSegments?.vip?.find(
+                                                (c: any) => c["Nombre Cliente"] === client["Nombre Cliente"],
+                                              )
+                                                ? "VIP"
+                                                : predictiveAnalysis?.clientSegments?.problematic?.find(
+                                                      (c: any) => c["Nombre Cliente"] === client["Nombre Cliente"],
+                                                    )
+                                                  ? "En Riesgo"
+                                                  : predictiveAnalysis?.clientSegments?.regular?.find(
+                                                        (c: any) => c["Nombre Cliente"] === client["Nombre Cliente"],
+                                                      )
+                                                    ? "Regular"
+                                                    : "Nuevo",
+                                            )}
+                                          </span>
+                                        </div>
+                                      </div>
+
+                                      <div className="text-sm">
+                                        <p className="font-medium mb-1">Recomendación:</p>
+                                        <p className="text-muted-foreground">
+                                          {predictiveAnalysis?.churnRisk?.find(
+                                            (c: any) => c.client === client["Nombre Cliente"],
+                                          )?.recommendation ||
+                                            predictiveAnalysis?.recoveryAnalysis?.find(
+                                              (c: any) => c.client === client["Nombre Cliente"],
+                                            )?.strategy ||
+                                            "Mantener comunicación regular"}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </CardContent>
+                                </Card>
+                              </div>
+
+                              <Card>
+                                <CardHeader className="pb-2">
+                                  <CardTitle className="text-lg">Historial de Pedidos</CardTitle>
+                                </CardHeader>
+                                <CardContent className="h-80">
+                                  <ResponsiveContainer width="100%" height="100%">
+                                    <AreaChart data={clientChartData.monthlyData || []}>
+                                      <CartesianGrid strokeDasharray="3 3" />
+                                      <XAxis dataKey="month" />
+                                      <YAxis yAxisId="left" orientation="left" stroke="#8884d8" />
+                                      <YAxis yAxisId="right" orientation="right" stroke="#82ca9d" />
+                                      <Tooltip />
+                                      <Legend />
+                                      <Area
+                                        yAxisId="left"
+                                        type="monotone"
+                                        dataKey="pedidos"
+                                        stroke="#8884d8"
+                                        fill="#8884d8"
+                                        name="Pedidos"
+                                      />
+                                      <Area
+                                        yAxisId="right"
+                                        type="monotone"
+                                        dataKey="valor"
+                                        stroke="#82ca9d"
+                                        fill="#82ca9d"
+                                        name="Valor ($)"
+                                      />
+                                    </AreaChart>
+                                  </ResponsiveContainer>
+                                </CardContent>
+                              </Card>
+                            </TabsContent>
+                          )
+                        })}
+                      </Tabs>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+
+                <TabsContent value="gpt-insights" className="space-y-4">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Análisis Predictivo y Segmentación</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <Tabs defaultValue="segments" className="w-full">
+                        <TabsList className="grid w-full grid-cols-5">
+                          <TabsTrigger value="segments">Segmentación</TabsTrigger>
+                          <TabsTrigger value="demand">Predicción de Demanda</TabsTrigger>
+                          <TabsTrigger value="churn">Riesgo de Abandono</TabsTrigger>
+                          <TabsTrigger value="growth">Oportunidades</TabsTrigger>
+                          <TabsTrigger value="recovery">Recuperación</TabsTrigger>
+                        </TabsList>
+
+                        <TabsContent value="segments" className="space-y-4 pt-4">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <Card>
+                              <CardHeader className="bg-green-50 dark:bg-green-900/20">
+                                <CardTitle className="text-green-700 dark:text-green-300 flex items-center gap-2">
+                                  <Star className="h-5 w-5" />
+                                  Clientes VIP ({predictiveAnalysis?.clientSegments?.vip?.length || 0})
+                                </CardTitle>
+                              </CardHeader>
+                              <CardContent className="pt-4">
+                                <div className="space-y-3">
+                                  {predictiveAnalysis?.clientSegments?.vip
+                                    ?.slice(0, 5)
+                                    .map((client: any, i: number) => (
+                                      <div key={i} className="flex justify-between items-center border-b pb-2">
+                                        <div>
+                                          <p className="font-medium">{client["Nombre Cliente"]}</p>
+                                          <p className="text-xs text-muted-foreground">
+                                            {client["Total Pedidos"]} pedidos · $
+                                            {client["Total Gastado"]?.toLocaleString()}
+                                          </p>
+                                        </div>
+                                        <Badge variant="default">VIP</Badge>
+                                      </div>
+                                    ))}
+                                </div>
+                                <div className="mt-4 p-3 bg-muted rounded-lg">
+                                  <h4 className="font-semibold mb-1">Estrategia Recomendada:</h4>
+                                  <p className="text-sm">
+                                    Programa de fidelización exclusivo, atención personalizada y ofertas especiales para
+                                    mantener su lealtad.
+                                  </p>
+                                </div>
+                              </CardContent>
+                            </Card>
+
+                            <Card>
+                              <CardHeader className="bg-blue-50 dark:bg-blue-900/20">
+                                <CardTitle className="text-blue-700 dark:text-blue-300 flex items-center gap-2">
+                                  <Users className="h-5 w-5" />
+                                  Clientes Regulares ({predictiveAnalysis?.clientSegments?.regular?.length || 0})
+                                </CardTitle>
+                              </CardHeader>
+                              <CardContent className="pt-4">
+                                <div className="space-y-3">
+                                  {predictiveAnalysis?.clientSegments?.regular
+                                    ?.slice(0, 5)
+                                    .map((client: any, i: number) => (
+                                      <div key={i} className="flex justify-between items-center border-b pb-2">
+                                        <div>
+                                          <p className="font-medium">{client["Nombre Cliente"]}</p>
+                                          <p className="text-xs text-muted-foreground">
+                                            {client["Total Pedidos"]} pedidos · $
+                                            {client["Total Gastado"]?.toLocaleString()}
+                                          </p>
+                                        </div>
+                                        <Badge variant="secondary">Regular</Badge>
+                                      </div>
+                                    ))}
+                                </div>
+                                <div className="mt-4 p-3 bg-muted rounded-lg">
+                                  <h4 className="font-semibold mb-1">Estrategia Recomendada:</h4>
+                                  <p className="text-sm">
+                                    Incentivar mayor frecuencia de compra y aumentar el valor promedio por pedido con
+                                    promociones específicas.
+                                  </p>
+                                </div>
+                              </CardContent>
+                            </Card>
+
+                            <Card>
+                              <CardHeader className="bg-red-50 dark:bg-red-900/20">
+                                <CardTitle className="text-red-700 dark:text-red-300 flex items-center gap-2">
+                                  <AlertTriangle className="h-5 w-5" />
+                                  Clientes en Riesgo ({predictiveAnalysis?.clientSegments?.problematic?.length || 0})
+                                </CardTitle>
+                              </CardHeader>
+                              <CardContent className="pt-4">
+                                <div className="space-y-3">
+                                  {predictiveAnalysis?.clientSegments?.problematic
+                                    ?.slice(0, 5)
+                                    .map((client: any, i: number) => (
+                                      <div key={i} className="flex justify-between items-center border-b pb-2">
+                                        <div>
+                                          <p className="font-medium">{client["Nombre Cliente"]}</p>
+                                          <p className="text-xs text-muted-foreground">
+                                            Dificultad: {client["Puntuación Dificultad"]} · Problemas pago:{" "}
+                                            {client["Problemas Pago"]}
+                                          </p>
+                                        </div>
+                                        <Badge variant="destructive">En Riesgo</Badge>
+                                      </div>
+                                    ))}
+                                </div>
+                                <div className="mt-4 p-3 bg-muted rounded-lg">
+                                  <h4 className="font-semibold mb-1">Estrategia Recomendada:</h4>
+                                  <p className="text-sm">
+                                    Evaluar si vale la pena mantener la relación. Para los que sí, establecer límites
+                                    claros y mejorar la comunicación.
+                                  </p>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          </div>
+
                           <Card>
                             <CardHeader>
-                              <CardTitle className="text-lg">🥖 Productos Preferidos</CardTitle>
+                              <CardTitle>Distribución de Segmentos</CardTitle>
                             </CardHeader>
-                            <CardContent>
-                              <ResponsiveContainer width="100%" height={200}>
+                            <CardContent className="h-80">
+                              <ResponsiveContainer width="100%" height="100%">
                                 <PieChart>
                                   <Pie
-                                    data={clientChartData.clientProductData}
+                                    data={[
+                                      {
+                                        name: "VIP",
+                                        value: predictiveAnalysis?.clientSegments?.vip?.length || 0,
+                                        color: "#10B981",
+                                      },
+                                      {
+                                        name: "Regular",
+                                        value: predictiveAnalysis?.clientSegments?.regular?.length || 0,
+                                        color: "#3B82F6",
+                                      },
+                                      {
+                                        name: "Ocasional",
+                                        value: predictiveAnalysis?.clientSegments?.occasional?.length || 0,
+                                        color: "#F59E0B",
+                                      },
+                                      {
+                                        name: "Problemático",
+                                        value: predictiveAnalysis?.clientSegments?.problematic?.length || 0,
+                                        color: "#EF4444",
+                                      },
+                                      {
+                                        name: "Nuevo",
+                                        value: predictiveAnalysis?.clientSegments?.newbie?.length || 0,
+                                        color: "#8B5CF6",
+                                      },
+                                    ]}
                                     cx="50%"
                                     cy="50%"
                                     labelLine={false}
-                                    label={({ name, porcentaje }) => `${name}: ${porcentaje}%`}
-                                    outerRadius={60}
+                                    outerRadius={120}
                                     fill="#8884d8"
-                                    dataKey="cantidad"
+                                    dataKey="value"
+                                    label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
                                   >
-                                    {clientChartData.clientProductData.map((entry: any, idx: number) => (
-                                      <Cell key={`cell-${idx}`} fill={COLORS[idx % COLORS.length]} />
+                                    {[
+                                      { name: "VIP", color: "#10B981" },
+                                      { name: "Regular", color: "#3B82F6" },
+                                      { name: "Ocasional", color: "#F59E0B" },
+                                      { name: "Problemático", color: "#EF4444" },
+                                      { name: "Nuevo", color: "#8B5CF6" },
+                                    ].map((entry, index) => (
+                                      <Cell key={`cell-${index}`} fill={entry.color} />
                                     ))}
                                   </Pie>
                                   <Tooltip />
@@ -1696,670 +2014,828 @@ export default function WhatsAppAnalyzer() {
                               </ResponsiveContainer>
                             </CardContent>
                           </Card>
-                        </div>
+                        </TabsContent>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                          {/* Métricas del cliente */}
-                          <div className="space-y-4">
-                            <div>
-                              <h4 className="font-semibold mb-2">💰 Métricas de Negocio</h4>
-                              <div className="text-sm space-y-1">
-                                <p>
-                                  <strong>Total Pedidos:</strong> {client["Total Pedidos"]}
-                                </p>
-                                <p>
-                                  <strong>Total Gastado:</strong> ${client["Total Gastado"]?.toLocaleString()}
-                                </p>
-                                <p>
-                                  <strong>Valor Promedio:</strong> ${client["Valor Promedio Pedido"]?.toLocaleString()}
-                                </p>
-                                <p>
-                                  <strong>Frecuencia:</strong> {client["Frecuencia Semanal"]} pedidos/semana
-                                </p>
-                                <p>
-                                  <strong>Último Pedido:</strong> {client["Último Pedido"]}
-                                </p>
-                                <p>
-                                  <strong>Pedidos Específicos:</strong> {client["Pedidos Específicos"] || 0}
-                                </p>
-                                <p>
-                                  <strong>Pedidos Generales:</strong> {client["Pedidos Generales"] || 0}
-                                </p>
-                                <p>
-                                  <strong>Piezas Específicas:</strong> {client["Piezas Específicas"] || 0}
-                                </p>
-                                <p>
-                                  <strong>Piezas Generales:</strong> {client["Piezas Generales"] || 0}
-                                </p>
-                              </div>
-                            </div>
-
-                            <div>
-                              <h4 className="font-semibold mb-2">📊 Productos Preferidos (Detalle)</h4>
-                              <div className="text-sm space-y-1">
-                                {client["Productos Detallados"]?.slice(0, 5).map((product: any, idx: number) => (
-                                  <div key={idx} className="flex justify-between">
-                                    <span>{product.product}</span>
-                                    <Badge variant="outline">{product.percentage}%</Badge>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Análisis GPT */}
-                          <div className="space-y-4">
-                            <div>
-                              <h4 className="font-semibold mb-2 flex items-center gap-2">🤖 Análisis con IA</h4>
-                              <div className="space-y-3">
-                                <div>
-                                  <h5 className="text-sm font-medium text-blue-600">Perfil de Comportamiento</h5>
-                                  <p className="text-sm text-muted-foreground">
-                                    {client["Perfil de Comportamiento"] || "Análisis en proceso..."}
-                                  </p>
-                                </div>
-
-                                <div>
-                                  <h5 className="text-sm font-medium text-green-600">Valor para el Negocio</h5>
-                                  <p className="text-sm text-muted-foreground">
-                                    {client["Valor para Negocio"] || "Evaluando..."}
-                                  </p>
-                                </div>
-                              </div>
-                            </div>
-
-                            <div>
-                              <h4 className="font-semibold mb-2">🎯 Recomendaciones</h4>
-                              <div className="space-y-1">
-                                {client["Recomendaciones GPT"]?.slice(0, 3).map((rec: string, idx: number) => (
-                                  <div
-                                    key={idx}
-                                    className="text-sm p-2 bg-green-50 rounded border-l-2 border-green-200"
-                                  >
-                                    {rec}
-                                  </div>
-                                )) || <p className="text-sm text-muted-foreground">Generando recomendaciones...</p>}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Alertas */}
-                        <div className="mt-4 space-y-2">
-                          {client["Problemas Pago"] > 0 && (
-                            <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
-                              ⚠️ <strong>Alerta de Pago:</strong> {client["Problemas Pago"]} problema(s) detectado(s)
-                            </div>
-                          )}
-
-                          {client["Tiempo Respuesta (hrs)"] > 4 && (
-                            <div className="p-3 bg-yellow-50 border border-yellow-200 rounded text-sm text-yellow-700">
-                              ⏰ <strong>Respuesta Lenta:</strong> {client["Tiempo Respuesta (hrs)"]} horas promedio
-                            </div>
-                          )}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  )
-                })}
-              </div>
-            </TabsContent>
-
-            <TabsContent value="gpt-insights">
-              {(() => {
-                if (!analysisData) {
-                  return (
-                    <Card>
-                      <CardContent className="p-6 text-center">
-                        <p>No hay datos para analizar</p>
-                      </CardContent>
-                    </Card>
-                  )
-                }
-
-                if (!predictiveAnalysis) {
-                  return (
-                    <Card>
-                      <CardContent className="p-6 text-center">
-                        <p>Procesando insights y visualizaciones...</p>
-                      </CardContent>
-                    </Card>
-                  )
-                }
-
-                return (
-                  <div className="space-y-6">
-                    {/* Resumen Ejecutivo Mejorado */}
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-2">🎯 Resumen Ejecutivo Estratégico</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-                          <div className="p-4 bg-blue-50 rounded-lg text-center">
-                            <h3 className="font-bold text-2xl text-blue-600">
-                              {Object.values(predictiveAnalysis.clientSegments).flat().length}
-                            </h3>
-                            <p className="text-sm text-blue-700">Clientes Segmentados</p>
-                          </div>
-                          <div className="p-4 bg-red-50 rounded-lg text-center">
-                            <h3 className="font-bold text-2xl text-red-600">
-                              {predictiveAnalysis.churnRisk.filter((c: any) => c.riskLevel === "Alto").length}
-                            </h3>
-                            <p className="text-sm text-red-700">Alto Riesgo Abandono</p>
-                          </div>
-                          <div className="p-4 bg-green-50 rounded-lg text-center">
-                            <h3 className="font-bold text-2xl text-green-600">
-                              {predictiveAnalysis.growthOpportunities.filter((o: any) => o.priority === "Alta").length}
-                            </h3>
-                            <p className="text-sm text-green-700">Oportunidades Alta Prioridad</p>
-                          </div>
-                          <div className="p-4 bg-purple-50 rounded-lg text-center">
-                            <h3 className="font-bold text-2xl text-purple-600">
-                              $
-                              {Math.round(
-                                predictiveAnalysis.growthOpportunities.reduce(
-                                  (sum: number, o: any) => sum + o.potentialValue,
-                                  0,
-                                ) / 1000,
-                              )}
-                              k
-                            </h3>
-                            <p className="text-sm text-purple-700">Potencial de Crecimiento</p>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    {/* Segmentación de Clientes */}
-                    <Card>
-                      <CardHeader>
-                        <CardTitle>👥 Segmentación Automática de Clientes</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                          {Object.entries(predictiveAnalysis.clientSegments).map(
-                            ([segmentName, clients]: [string, any]) => (
-                              <div key={segmentName} className="border rounded-lg p-4">
-                                <h4 className="font-semibold mb-2 capitalize">
-                                  {segmentName === "vip"
-                                    ? "VIP"
-                                    : segmentName === "regular"
-                                      ? "Regulares"
-                                      : segmentName === "occasional"
-                                        ? "Ocasionales"
-                                        : segmentName === "problematic"
-                                          ? "Problemáticos"
-                                          : "Nuevos"}
-                                  ({clients.length})
-                                </h4>
-                                <div className="space-y-2 max-h-40 overflow-y-auto">
-                                  {clients.slice(0, 5).map((client: any, idx: number) => (
-                                    <div
-                                      key={idx}
-                                      className="text-sm p-2 rounded"
-                                      style={{ backgroundColor: client.segmentColor + "20" }}
-                                    >
-                                      <p className="font-medium">{client["Nombre Cliente"]}</p>
-                                      <p className="text-xs text-muted-foreground">
-                                        ${client["Total Gastado"]?.toLocaleString()} • {client["Total Pedidos"]} pedidos
-                                      </p>
-                                    </div>
-                                  ))}
-                                  {clients.length > 5 && (
-                                    <p className="text-xs text-muted-foreground">+{clients.length - 5} más...</p>
-                                  )}
-                                </div>
-                              </div>
-                            ),
-                          )}
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    {/* Predicción de Demanda */}
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                      <Card>
-                        <CardHeader>
-                          <CardTitle>📈 Predicción de Demanda Semanal</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          <div className="space-y-3">
-                            {predictiveAnalysis.demandPrediction?.weeklyTrends.map((day: any, idx: number) => (
-                              <div key={idx} className="flex justify-between items-center p-3 border rounded">
-                                <div>
-                                  <p className="font-medium">{day.day}</p>
-                                  <p className="text-sm text-muted-foreground">
-                                    Histórico: {day.avgDemand} piezas • Confianza: {day.confidence}
-                                  </p>
-                                </div>
-                                <div className="text-right">
-                                  <p className="font-bold text-lg">{day.predictedDemand}</p>
-                                  <p className="text-sm text-green-600">Predicción</p>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </CardContent>
-                      </Card>
-
-                      <Card>
-                        <CardHeader>
-                          <CardTitle>🥖 Tendencias de Productos</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          <div className="space-y-3">
-                            {predictiveAnalysis.demandPrediction?.productTrends.map((product: any, idx: number) => (
-                              <div key={idx} className="p-3 border rounded">
-                                <div className="flex justify-between items-start mb-2">
-                                  <p className="font-medium">{product.product}</p>
-                                  <Badge
-                                    variant={
-                                      product.trend > 0 ? "default" : product.trend < -10 ? "destructive" : "secondary"
-                                    }
-                                  >
-                                    {product.trend > 0 ? "+" : ""}
-                                    {product.trend}%
-                                  </Badge>
-                                </div>
-                                <p className="text-sm text-muted-foreground mb-1">Estado: {product.predictedGrowth}</p>
-                                <p className="text-sm font-medium text-blue-600">💡 {product.recommendation}</p>
-                              </div>
-                            ))}
-                          </div>
-                        </CardContent>
-                      </Card>
-                    </div>
-
-                    {/* Análisis de Riesgo de Abandono */}
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-2">⚠️ Clientes en Riesgo de Abandono</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        {predictiveAnalysis.churnRisk.length === 0 ? (
-                          <p className="text-center text-muted-foreground py-4">
-                            ¡Excelente! No hay clientes en alto riesgo de abandono
-                          </p>
-                        ) : (
-                          <div className="space-y-3">
-                            {predictiveAnalysis.churnRisk.slice(0, 10).map((client: any, idx: number) => (
-                              <div key={idx} className="p-4 border rounded-lg">
-                                <div className="flex justify-between items-start mb-2">
-                                  <h4 className="font-medium">{client.client}</h4>
-                                  <Badge variant={client.riskLevel === "Alto" ? "destructive" : "secondary"}>
-                                    Riesgo {client.riskLevel}
-                                  </Badge>
-                                </div>
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-                                  <div>
-                                    <p className="text-muted-foreground">Días sin pedido:</p>
-                                    <p className="font-medium">{client.daysSinceLastOrder} días</p>
-                                  </div>
-                                  <div>
-                                    <p className="text-muted-foreground">Esperado cada:</p>
-                                    <p className="font-medium">{client.expectedDays} días</p>
-                                  </div>
-                                  <div>
-                                    <p className="text-muted-foreground">Acción recomendada:</p>
-                                    <p className="font-medium text-blue-600">{client.recommendation}</p>
-                                  </div>
-                                </div>
-                                {client.reasons.length > 0 && (
-                                  <div className="mt-2">
-                                    <p className="text-sm text-muted-foreground">Factores de riesgo:</p>
-                                    <ul className="text-sm list-disc list-inside">
-                                      {client.reasons.map((reason: string, ridx: number) => (
-                                        <li key={ridx}>{reason}</li>
-                                      ))}
-                                    </ul>
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-
-                    {/* Oportunidades de Crecimiento */}
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-2">🚀 Oportunidades de Crecimiento</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="space-y-4">
-                          {predictiveAnalysis.growthOpportunities.slice(0, 10).map((opportunity: any, idx: number) => (
-                            <div key={idx} className="p-4 border rounded-lg">
-                              <div className="flex justify-between items-start mb-3">
-                                <h4 className="font-medium">{opportunity.client}</h4>
-                                <div className="text-right">
-                                  <Badge
-                                    variant={
-                                      opportunity.priority === "Alta"
-                                        ? "default"
-                                        : opportunity.priority === "Media"
-                                          ? "secondary"
-                                          : "outline"
-                                    }
-                                  >
-                                    {opportunity.priority} Prioridad
-                                  </Badge>
-                                  <p className="text-sm text-green-600 mt-1">
-                                    +{opportunity.growthPotential}% potencial
-                                  </p>
-                                </div>
-                              </div>
-
-                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-3 text-sm">
-                                <div>
-                                  <p className="text-muted-foreground">Valor actual:</p>
-                                  <p className="font-medium">${opportunity.currentValue.toLocaleString()}</p>
-                                </div>
-                                <div>
-                                  <p className="text-muted-foreground">Potencial estimado:</p>
-                                  <p className="font-medium text-green-600">
-                                    +${opportunity.potentialValue.toLocaleString()}
-                                  </p>
-                                </div>
-                                <div>
-                                  <p className="text-muted-foreground">Valor total proyectado:</p>
-                                  <p className="font-medium text-blue-600">
-                                    ${(opportunity.currentValue + opportunity.potentialValue).toLocaleString()}
-                                  </p>
-                                </div>
-                              </div>
-
-                              <div>
-                                <p className="text-sm text-muted-foreground mb-1">Oportunidades identificadas:</p>
-                                <ul className="text-sm list-disc list-inside space-y-1">
-                                  {opportunity.opportunities.map((opp: string, oidx: number) => (
-                                    <li key={oidx} className="text-blue-600">
-                                      {opp}
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    {/* Análisis de Ciclo de Vida */}
-                    <Card>
-                      <CardHeader>
-                        <CardTitle>🔄 Análisis de Ciclo de Vida de Clientes</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                          {["Nuevo Cliente", "Cliente Activo", "Cliente Regular", "En Riesgo", "Inactivo"].map(
-                            (stage) => {
-                              const stageClients = predictiveAnalysis.lifecycleAnalysis.filter(
-                                (c: any) => c.stage === stage,
-                              )
-                              return (
-                                <div key={stage} className="border rounded-lg p-4">
-                                  <h4 className="font-semibold mb-2">
-                                    {stage} ({stageClients.length})
-                                  </h4>
-                                  <div className="space-y-2 max-h-40 overflow-y-auto">
-                                    {stageClients.slice(0, 5).map((client: any, idx: number) => (
-                                      <div key={idx} className="text-sm p-2 rounded border">
-                                        <p className="font-medium">{client.client}</p>
-                                        <p className="text-xs text-muted-foreground">
-                                          {client.daysSinceLastOrder} días • ${client.totalValue.toLocaleString()}
-                                        </p>
-                                        <p className="text-xs text-blue-600 mt-1">{client.nextAction}</p>
-                                      </div>
-                                    ))}
-                                    {stageClients.length > 5 && (
-                                      <p className="text-xs text-muted-foreground">+{stageClients.length - 5} más...</p>
+                        <TabsContent value="demand" className="space-y-4 pt-4">
+                          <Card>
+                            <CardHeader>
+                              <CardTitle>Predicción de Demanda por Día de la Semana</CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                              <div className="rounded-md border">
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead>Día</TableHead>
+                                      <TableHead>Demanda Histórica</TableHead>
+                                      <TableHead>Predicción</TableHead>
+                                      <TableHead>Tendencia</TableHead>
+                                      <TableHead>Confianza</TableHead>
+                                      <TableHead>Recomendación</TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {predictiveAnalysis?.demandPrediction?.weeklyTrends?.map(
+                                      (day: any, index: number) => (
+                                        <TableRow key={index}>
+                                          <TableCell className="font-medium">{day.day}</TableCell>
+                                          <TableCell>{day.avgDemand} piezas</TableCell>
+                                          <TableCell className="font-bold">{day.predictedDemand} piezas</TableCell>
+                                          <TableCell>
+                                            <Badge
+                                              variant={
+                                                day.trend === "Creciente"
+                                                  ? "default"
+                                                  : day.trend === "Declinante"
+                                                    ? "destructive"
+                                                    : "secondary"
+                                              }
+                                            >
+                                              {day.trend}
+                                              {day.trendPercentage
+                                                ? ` (${day.trendPercentage > 0 ? "+" : ""}${day.trendPercentage}%)`
+                                                : ""}
+                                            </Badge>
+                                          </TableCell>
+                                          <TableCell>{getPopularityBadge(day.confidence)}</TableCell>
+                                          <TableCell className="max-w-[200px]">
+                                            <ul className="text-xs list-disc pl-4">
+                                              {day.recommendations?.slice(0, 2).map((rec: string, i: number) => (
+                                                <li key={i}>{rec}</li>
+                                              ))}
+                                            </ul>
+                                          </TableCell>
+                                        </TableRow>
+                                      ),
                                     )}
-                                  </div>
-                                </div>
-                              )
-                            },
-                          )}
+                                  </TableBody>
+                                </Table>
+                              </div>
+                            </CardContent>
+                          </Card>
+
+                          <Card>
+                            <CardHeader>
+                              <CardTitle>Predicción de Demanda por Producto</CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                              <div className="rounded-md border">
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead>Producto</TableHead>
+                                      <TableHead>Demanda Actual</TableHead>
+                                      <TableHead>Predicción Semanal</TableHead>
+                                      <TableHead>Tendencia</TableHead>
+                                      <TableHead>Recomendación</TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {predictiveAnalysis?.demandPrediction?.productTrends?.map(
+                                      (product: any, index: number) => (
+                                        <TableRow key={index}>
+                                          <TableCell className="font-medium">{product.product}</TableCell>
+                                          <TableCell>{product.currentDemand}</TableCell>
+                                          <TableCell className="font-bold">{product.weeklyPrediction}</TableCell>
+                                          <TableCell>
+                                            <Badge
+                                              variant={
+                                                product.trend > 5
+                                                  ? "default"
+                                                  : product.trend < -5
+                                                    ? "destructive"
+                                                    : "secondary"
+                                              }
+                                            >
+                                              {product.predictedGrowth}
+                                              {product.trend
+                                                ? ` (${product.trend > 0 ? "+" : ""}${product.trend}%)`
+                                                : ""}
+                                            </Badge>
+                                          </TableCell>
+                                          <TableCell>{product.recommendation}</TableCell>
+                                        </TableRow>
+                                      ),
+                                    )}
+                                  </TableBody>
+                                </Table>
+                              </div>
+                            </CardContent>
+                          </Card>
+
+                          <Card>
+                            <CardHeader>
+                              <CardTitle>Visualización de Predicciones</CardTitle>
+                            </CardHeader>
+                            <CardContent className="h-80">
+                              <ResponsiveContainer width="100%" height="100%">
+                                <BarChart
+                                  data={predictiveAnalysis?.demandPrediction?.weeklyTrends?.map((day: any) => ({
+                                    name: day.day,
+                                    actual: day.avgDemand,
+                                    predicted: day.predictedDemand,
+                                  }))}
+                                >
+                                  <CartesianGrid strokeDasharray="3 3" />
+                                  <XAxis dataKey="name" />
+                                  <YAxis />
+                                  <Tooltip />
+                                  <Legend />
+                                  <Bar dataKey="actual" fill="#8884d8" name="Demanda Histórica" />
+                                  <Bar dataKey="predicted" fill="#82ca9d" name="Predicción" />
+                                </BarChart>
+                              </ResponsiveContainer>
+                            </CardContent>
+                          </Card>
+                        </TabsContent>
+
+                        <TabsContent value="churn" className="space-y-4 pt-4">
+                          <Card>
+                            <CardHeader>
+                              <CardTitle>Clientes en Riesgo de Abandono</CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                              <div className="rounded-md border">
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead>Cliente</TableHead>
+                                      <TableHead>Nivel de Riesgo</TableHead>
+                                      <TableHead>Días sin Pedidos</TableHead>
+                                      <TableHead>Razones</TableHead>
+                                      <TableHead>Recomendación</TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {predictiveAnalysis?.churnRisk?.map((client: any, index: number) => (
+                                      <TableRow key={index}>
+                                        <TableCell className="font-medium">{client.client}</TableCell>
+                                        <TableCell>{getRiskBadge(client.riskLevel)}</TableCell>
+                                        <TableCell>
+                                          {client.daysSinceLastOrder}{" "}
+                                          <span className="text-xs text-muted-foreground">
+                                            (esperado: {client.expectedDays})
+                                          </span>
+                                        </TableCell>
+                                        <TableCell>
+                                          <ul className="text-xs list-disc pl-4">
+                                            {client.reasons.map((reason: string, i: number) => (
+                                              <li key={i}>{reason}</li>
+                                            ))}
+                                          </ul>
+                                        </TableCell>
+                                        <TableCell>{client.recommendation}</TableCell>
+                                      </TableRow>
+                                    ))}
+                                  </TableBody>
+                                </Table>
+                              </div>
+                            </CardContent>
+                          </Card>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <Card>
+                              <CardHeader>
+                                <CardTitle>Distribución de Riesgo</CardTitle>
+                              </CardHeader>
+                              <CardContent className="h-80">
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <PieChart>
+                                    <Pie
+                                      data={[
+                                        {
+                                          name: "Alto Riesgo",
+                                          value:
+                                            predictiveAnalysis?.churnRisk?.filter((c: any) => c.riskLevel === "Alto")
+                                              .length || 0,
+                                        },
+                                        {
+                                          name: "Riesgo Medio",
+                                          value:
+                                            predictiveAnalysis?.churnRisk?.filter((c: any) => c.riskLevel === "Medio")
+                                              .length || 0,
+                                        },
+                                        {
+                                          name: "Bajo Riesgo",
+                                          value:
+                                            (cleanedData.clientsData?.length || 0) -
+                                            (predictiveAnalysis?.churnRisk?.length || 0),
+                                        },
+                                      ]}
+                                      cx="50%"
+                                      cy="50%"
+                                      labelLine={false}
+                                      outerRadius={120}
+                                      fill="#8884d8"
+                                      dataKey="value"
+                                      label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                                    >
+                                      <Cell fill="#ef4444" />
+                                      <Cell fill="#f59e0b" />
+                                      <Cell fill="#10b981" />
+                                    </Pie>
+                                    <Tooltip />
+                                  </PieChart>
+                                </ResponsiveContainer>
+                              </CardContent>
+                            </Card>
+
+                            <Card>
+                              <CardHeader>
+                                <CardTitle>Factores de Riesgo Principales</CardTitle>
+                              </CardHeader>
+                              <CardContent className="h-80">
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <BarChart
+                                    data={[
+                                      {
+                                        name: "Tiempo sin pedidos",
+                                        count:
+                                          predictiveAnalysis?.churnRisk?.filter((c: any) =>
+                                            c.reasons.some((r: string) => r.includes("Tiempo")),
+                                          ).length || 0,
+                                      },
+                                      {
+                                        name: "Baja satisfacción",
+                                        count:
+                                          predictiveAnalysis?.churnRisk?.filter((c: any) =>
+                                            c.reasons.some((r: string) => r.includes("satisfacción")),
+                                          ).length || 0,
+                                      },
+                                      {
+                                        name: "Problemas de pago",
+                                        count:
+                                          predictiveAnalysis?.churnRisk?.filter((c: any) =>
+                                            c.reasons.some((r: string) => r.includes("pago")),
+                                          ).length || 0,
+                                      },
+                                      {
+                                        name: "Baja frecuencia",
+                                        count:
+                                          predictiveAnalysis?.churnRisk?.filter((c: any) =>
+                                            c.reasons.some((r: string) => r.includes("frecuencia")),
+                                          ).length || 0,
+                                      },
+                                    ]}
+                                  >
+                                    <CartesianGrid strokeDasharray="3 3" />
+                                    <XAxis dataKey="name" />
+                                    <YAxis />
+                                    <Tooltip />
+                                    <Bar dataKey="count" fill="#ef4444" name="Clientes afectados" />
+                                  </BarChart>
+                                </ResponsiveContainer>
+                              </CardContent>
+                            </Card>
+                          </div>
+                        </TabsContent>
+
+                        <TabsContent value="growth" className="space-y-4 pt-4">
+                          <Card>
+                            <CardHeader>
+                              <CardTitle>Oportunidades de Crecimiento</CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                              <div className="rounded-md border">
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead>Cliente</TableHead>
+                                      <TableHead>Valor Actual</TableHead>
+                                      <TableHead>Potencial</TableHead>
+                                      <TableHead>Crecimiento</TableHead>
+                                      <TableHead>Oportunidades</TableHead>
+                                      <TableHead>Prioridad</TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {predictiveAnalysis?.growthOpportunities?.map((client: any, index: number) => (
+                                      <TableRow key={index}>
+                                        <TableCell className="font-medium">{client.client}</TableCell>
+                                        <TableCell>${client.currentValue?.toLocaleString()}</TableCell>
+                                        <TableCell>${client.potentialValue?.toLocaleString()}</TableCell>
+                                        <TableCell>+{client.growthPotential}%</TableCell>
+                                        <TableCell>
+                                          <ul className="text-xs list-disc pl-4">
+                                            {client.opportunities.map((opp: string, i: number) => (
+                                              <li key={i}>{opp}</li>
+                                            ))}
+                                          </ul>
+                                        </TableCell>
+                                        <TableCell>
+                                          <Badge
+                                            variant={
+                                              client.priority === "Alta"
+                                                ? "default"
+                                                : client.priority === "Media"
+                                                  ? "secondary"
+                                                  : "outline"
+                                            }
+                                          >
+                                            {client.priority}
+                                          </Badge>
+                                        </TableCell>
+                                      </TableRow>
+                                    ))}
+                                  </TableBody>
+                                </Table>
+                              </div>
+                            </CardContent>
+                          </Card>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <Card>
+                              <CardHeader>
+                                <CardTitle>Potencial de Crecimiento por Cliente</CardTitle>
+                              </CardHeader>
+                              <CardContent className="h-80">
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <BarChart
+                                    data={predictiveAnalysis?.growthOpportunities?.slice(0, 10).map((client: any) => ({
+                                      name:
+                                        client.client.length > 15
+                                          ? client.client.substring(0, 15) + "..."
+                                          : client.client,
+                                      actual: client.currentValue,
+                                      potential: client.potentialValue,
+                                    }))}
+                                  >
+                                    <CartesianGrid strokeDasharray="3 3" />
+                                    <XAxis dataKey="name" />
+                                    <YAxis />
+                                    <Tooltip />
+                                    <Legend />
+                                    <Bar dataKey="actual" fill="#8884d8" name="Valor Actual" />
+                                    <Bar dataKey="potential" fill="#82ca9d" name="Potencial" />
+                                  </BarChart>
+                                </ResponsiveContainer>
+                              </CardContent>
+                            </Card>
+
+                            <Card>
+                              <CardHeader>
+                                <CardTitle>Tipos de Oportunidades</CardTitle>
+                              </CardHeader>
+                              <CardContent className="h-80">
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <PieChart>
+                                    <Pie
+                                      data={[
+                                        {
+                                          name: "Aumentar frecuencia",
+                                          value:
+                                            predictiveAnalysis?.growthOpportunities?.filter((c: any) =>
+                                              c.opportunities.some((o: string) => o.includes("frecuencia")),
+                                            ).length || 0,
+                                        },
+                                        {
+                                          name: "Incrementar valor",
+                                          value:
+                                            predictiveAnalysis?.growthOpportunities?.filter((c: any) =>
+                                              c.opportunities.some((o: string) => o.includes("valor")),
+                                            ).length || 0,
+                                        },
+                                        {
+                                          name: "Diversificar productos",
+                                          value:
+                                            predictiveAnalysis?.growthOpportunities?.filter((c: any) =>
+                                              c.opportunities.some((o: string) => o.includes("Diversificar")),
+                                            ).length || 0,
+                                        },
+                                        {
+                                          name: "Fidelización",
+                                          value:
+                                            predictiveAnalysis?.growthOpportunities?.filter((c: any) =>
+                                              c.opportunities.some((o: string) => o.includes("fidelización")),
+                                            ).length || 0,
+                                        },
+                                      ]}
+                                      cx="50%"
+                                      cy="50%"
+                                      labelLine={false}
+                                      outerRadius={120}
+                                      fill="#8884d8"
+                                      dataKey="value"
+                                      label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                                    >
+                                      {COLORS.map((color, index) => (
+                                        <Cell key={`cell-${index}`} fill={color} />
+                                      ))}
+                                    </Pie>
+                                    <Tooltip />
+                                  </PieChart>
+                                </ResponsiveContainer>
+                              </CardContent>
+                            </Card>
+                          </div>
+                        </TabsContent>
+
+                        <TabsContent value="recovery" className="space-y-4 pt-4">
+                          <Card>
+                            <CardHeader>
+                              <CardTitle>Análisis de Recuperación de Clientes</CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                              <div className="rounded-md border">
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead>Cliente</TableHead>
+                                      <TableHead>Días Inactivo</TableHead>
+                                      <TableHead>Valor Potencial</TableHead>
+                                      <TableHead>ROI Recuperación</TableHead>
+                                      <TableHead>¿Vale la pena?</TableHead>
+                                      <TableHead>Estrategia</TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {predictiveAnalysis?.recoveryAnalysis?.map((client: any, index: number) => (
+                                      <TableRow key={index}>
+                                        <TableCell className="font-medium">{client.client}</TableCell>
+                                        <TableCell>{client.daysSinceLastOrder} días</TableCell>
+                                        <TableCell>${client.predictedCLV?.toLocaleString()}</TableCell>
+                                        <TableCell>
+                                          <Badge
+                                            variant={
+                                              client.recoveryROI > 300
+                                                ? "default"
+                                                : client.recoveryROI > 100
+                                                  ? "secondary"
+                                                  : client.recoveryROI > 0
+                                                    ? "outline"
+                                                    : "destructive"
+                                            }
+                                          >
+                                            {client.recoveryROI > 0
+                                              ? `+${client.recoveryROI}%`
+                                              : `${client.recoveryROI}%`}
+                                          </Badge>
+                                        </TableCell>
+                                        <TableCell>{client.worthRecovering}</TableCell>
+                                        <TableCell>{client.strategy}</TableCell>
+                                      </TableRow>
+                                    ))}
+                                  </TableBody>
+                                </Table>
+                              </div>
+                            </CardContent>
+                          </Card>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <Card>
+                              <CardHeader>
+                                <CardTitle>ROI de Recuperación por Cliente</CardTitle>
+                              </CardHeader>
+                              <CardContent className="h-80">
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <BarChart
+                                    data={predictiveAnalysis?.recoveryAnalysis?.slice(0, 10).map((client: any) => ({
+                                      name:
+                                        client.client.length > 15
+                                          ? client.client.substring(0, 15) + "..."
+                                          : client.client,
+                                      roi: client.recoveryROI,
+                                    }))}
+                                  >
+                                    <CartesianGrid strokeDasharray="3 3" />
+                                    <XAxis dataKey="name" />
+                                    <YAxis />
+                                    <Tooltip />
+                                    <Bar
+                                      dataKey="roi"
+                                      fill="#8884d8"
+                                      name="ROI de Recuperación (%)"
+                                      label={{ position: "top" }}
+                                    />
+                                  </BarChart>
+                                </ResponsiveContainer>
+                              </CardContent>
+                            </Card>
+
+                            <Card>
+                              <CardHeader>
+                                <CardTitle>Factores de Riesgo para Recuperación</CardTitle>
+                              </CardHeader>
+                              <CardContent className="h-80">
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <PieChart>
+                                    <Pie
+                                      data={[
+                                        {
+                                          name: "Mucho tiempo sin pedidos",
+                                          value:
+                                            predictiveAnalysis?.recoveryAnalysis?.filter((c: any) =>
+                                              c.riskFactors.some((r: string) => r.includes("tiempo")),
+                                            ).length || 0,
+                                        },
+                                        {
+                                          name: "Cliente difícil",
+                                          value:
+                                            predictiveAnalysis?.recoveryAnalysis?.filter((c: any) =>
+                                              c.riskFactors.some((r: string) => r.includes("difícil")),
+                                            ).length || 0,
+                                        },
+                                        {
+                                          name: "Problemas de pago",
+                                          value:
+                                            predictiveAnalysis?.recoveryAnalysis?.filter((c: any) =>
+                                              c.riskFactors.some((r: string) => r.includes("pago")),
+                                            ).length || 0,
+                                        },
+                                        {
+                                          name: "Baja satisfacción",
+                                          value:
+                                            predictiveAnalysis?.recoveryAnalysis?.filter((c: any) =>
+                                              c.riskFactors.some((r: string) => r.includes("satisfacción")),
+                                            ).length || 0,
+                                        },
+                                        {
+                                          name: "Baja frecuencia",
+                                          value:
+                                            predictiveAnalysis?.recoveryAnalysis?.filter((c: any) =>
+                                              c.riskFactors.some((r: string) => r.includes("frecuencia")),
+                                            ).length || 0,
+                                        },
+                                      ]}
+                                      cx="50%"
+                                      cy="50%"
+                                      labelLine={false}
+                                      outerRadius={120}
+                                      fill="#8884d8"
+                                      dataKey="value"
+                                      label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                                    >
+                                      {COLORS.map((color, index) => (
+                                        <Cell key={`cell-${index}`} fill={color} />
+                                      ))}
+                                    </Pie>
+                                    <Tooltip />
+                                  </PieChart>
+                                </ResponsiveContainer>
+                              </CardContent>
+                            </Card>
+                          </div>
+                        </TabsContent>
+                      </Tabs>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+
+                <TabsContent value="products" className="space-y-4">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <BarChart3 className="h-5 w-5" />
+                        Productos Más Populares
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="rounded-md border">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Producto</TableHead>
+                              <TableHead>Total Pedidos</TableHead>
+                              <TableHead>Popularidad</TableHead>
+                              <TableHead>Tendencia</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {cleanedData.productsData?.map((product: any, index: number) => (
+                              <TableRow key={index}>
+                                <TableCell className="font-medium">{product.Producto}</TableCell>
+                                <TableCell>{product["Total Pedidos"]}</TableCell>
+                                <TableCell>{getPopularityBadge(product.Popularidad)}</TableCell>
+                                <TableCell>
+                                  {predictiveAnalysis?.demandPrediction?.productTrends?.find(
+                                    (p: any) => p.product === product.Producto,
+                                  )?.predictedGrowth || "Sin datos"}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+
+                <TabsContent value="trends" className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Tendencias por Hora del Día</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="rounded-md border">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Hora</TableHead>
+                                <TableHead>Nivel de Actividad</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {cleanedData.trendsData
+                                ?.filter((trend: any) => trend.Tipo === "Hora")
+                                .map((trend: any, index: number) => (
+                                  <TableRow key={index}>
+                                    <TableCell className="font-medium">{trend.Periodo}</TableCell>
+                                    <TableCell>{trend.Actividad}</TableCell>
+                                  </TableRow>
+                                ))}
+                            </TableBody>
+                          </Table>
                         </div>
                       </CardContent>
                     </Card>
-                    {/* Análisis de Recuperación de Clientes */}
+
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Tendencias por Día de la Semana</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="rounded-md border">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Día</TableHead>
+                                <TableHead>Nivel de Actividad</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {cleanedData.trendsData
+                                ?.filter((trend: any) => trend.Tipo === "Día Semana")
+                                .map((trend: any, index: number) => (
+                                  <TableRow key={index}>
+                                    <TableCell className="font-medium">{trend.Periodo}</TableCell>
+                                    <TableCell>{trend.Actividad}</TableCell>
+                                  </TableRow>
+                                ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="export" className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <Card>
                       <CardHeader>
                         <CardTitle className="flex items-center gap-2">
-                          💰 Análisis de Recuperación de Clientes Inactivos
+                          <Download className="h-5 w-5" />
+                          Exportar Datos de Clientes
                         </CardTitle>
                       </CardHeader>
                       <CardContent>
-                        {predictiveAnalysis.recoveryAnalysis.length === 0 ? (
-                          <p className="text-center text-muted-foreground py-4">
-                            ¡Felicidades! No hay clientes inactivos con potencial de recuperación.
-                          </p>
-                        ) : (
-                          <div className="space-y-4">
-                            {predictiveAnalysis.recoveryAnalysis.slice(0, 10).map((client: any, idx: number) => (
-                              <div key={idx} className="p-4 border rounded-lg">
-                                <div className="flex justify-between items-start mb-3">
-                                  <h4 className="font-medium">{client.client}</h4>
-                                  <div className="text-right">
-                                    <Badge
-                                      variant={
-                                        client.priority === "Alta"
-                                          ? "default"
-                                          : client.priority === "Media"
-                                            ? "secondary"
-                                            : "outline"
-                                      }
-                                    >
-                                      {client.priority} Prioridad
-                                    </Badge>
-                                    <p className="text-sm text-green-600 mt-1">ROI: +{client.recoveryROI}%</p>
-                                  </div>
-                                </div>
+                        <p className="text-sm text-muted-foreground mb-4">
+                          Descarga los datos de todos los clientes en formato CSV para análisis adicional.
+                        </p>
+                        <Button
+                          onClick={() => downloadCSV(cleanedData.clientsData || [], "clientes-whatsapp.csv")}
+                          className="w-full"
+                        >
+                          Descargar CSV de Clientes
+                        </Button>
+                      </CardContent>
+                    </Card>
 
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-3 text-sm">
-                                  <div>
-                                    <p className="text-muted-foreground">Valor actual:</p>
-                                    <p className="font-medium">${client.currentValue.toLocaleString()}</p>
-                                  </div>
-                                  <div>
-                                    <p className="text-muted-foreground">CLV proyectado:</p>
-                                    <p className="font-medium text-green-600">
-                                      +${client.predictedCLV.toLocaleString()}
-                                    </p>
-                                  </div>
-                                  <div>
-                                    <p className="text-muted-foreground">Costo recuperación:</p>
-                                    <p className="font-medium text-red-600">
-                                      ${client.estimatedRecoveryCost.toLocaleString()}
-                                    </p>
-                                  </div>
-                                </div>
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                          <Download className="h-5 w-5" />
+                          Exportar Datos de Productos
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <p className="text-sm text-muted-foreground mb-4">
+                          Descarga los datos de todos los productos en formato CSV para análisis adicional.
+                        </p>
+                        <Button
+                          onClick={() => downloadCSV(cleanedData.productsData || [], "productos-whatsapp.csv")}
+                          className="w-full"
+                        >
+                          Descargar CSV de Productos
+                        </Button>
+                      </CardContent>
+                    </Card>
 
-                                <div>
-                                  <p className="text-sm text-muted-foreground mb-1">Estrategia recomendada:</p>
-                                  <p className="text-sm text-blue-600">{client.strategy}</p>
-                                </div>
-
-                                {client.riskFactors.length > 0 && (
-                                  <div className="mt-2">
-                                    <p className="text-sm text-muted-foreground">Factores de riesgo:</p>
-                                    <ul className="text-sm list-disc list-inside">
-                                      {client.riskFactors.map((factor: string, fidx: number) => (
-                                        <li key={fidx}>{factor}</li>
-                                      ))}
-                                    </ul>
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                          <Download className="h-5 w-5" />
+                          Exportar Datos de Pedidos
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <p className="text-sm text-muted-foreground mb-4">
+                          Descarga los datos de todos los pedidos en formato CSV para análisis adicional.
+                        </p>
+                        <Button
+                          onClick={() => downloadCSV(cleanedData.ordersData || [], "pedidos-whatsapp.csv")}
+                          className="w-full"
+                        >
+                          Descargar CSV de Pedidos
+                        </Button>
                       </CardContent>
                     </Card>
                   </div>
-                )
-              })()}
-            </TabsContent>
 
-            <TabsContent value="products">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Análisis de Productos</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Producto</TableHead>
-                          <TableHead>Total Menciones</TableHead>
-                          <TableHead>Popularidad</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {analysisData.productsData?.map((product: any, index: number) => (
-                          <TableRow key={index}>
-                            <TableCell className="font-medium">{product.Producto}</TableCell>
-                            <TableCell>{product["Total Pedidos"]}</TableCell>
-                            <TableCell>{getPopularityBadge(product.Popularidad)}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Exportar Análisis Predictivo</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <Button
+                          onClick={() =>
+                            downloadCSV(
+                              [
+                                ...Object.values(predictiveAnalysis?.clientSegments?.vip || []),
+                                ...Object.values(predictiveAnalysis?.clientSegments?.regular || []),
+                                ...Object.values(predictiveAnalysis?.clientSegments?.occasional || []),
+                                ...Object.values(predictiveAnalysis?.clientSegments?.problematic || []),
+                                ...Object.values(predictiveAnalysis?.clientSegments?.newbie || []),
+                              ],
+                              "segmentacion-clientes.csv",
+                            )
+                          }
+                          variant="outline"
+                        >
+                          Segmentación de Clientes
+                        </Button>
 
-            <TabsContent value="trends">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Tendencias Temporales</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    {/* Hourly Trends */}
-                    <div>
-                      <h3 className="font-semibold mb-3">Actividad por Hora</h3>
-                      <div className="space-y-2">
-                        {analysisData.trendsData
-                          ?.filter((trend: any) => trend.Tipo === "Hora")
-                          .sort((a: any, b: any) => b.Actividad - a.Actividad)
-                          .slice(0, 5)
-                          .map((trend: any, index: number) => (
-                            <div key={index} className="flex justify-between items-center">
-                              <span className="text-sm">{trend.Periodo}</span>
-                              <Badge variant="outline">{trend.Actividad}</Badge>
-                            </div>
-                          ))}
+                        <Button
+                          onClick={() => downloadCSV(predictiveAnalysis?.churnRisk || [], "riesgo-abandono.csv")}
+                          variant="outline"
+                        >
+                          Riesgo de Abandono
+                        </Button>
+
+                        <Button
+                          onClick={() =>
+                            downloadCSV(predictiveAnalysis?.growthOpportunities || [], "oportunidades-crecimiento.csv")
+                          }
+                          variant="outline"
+                        >
+                          Oportunidades de Crecimiento
+                        </Button>
+
+                        <Button
+                          onClick={() =>
+                            downloadCSV(
+                              predictiveAnalysis?.demandPrediction?.weeklyTrends || [],
+                              "prediccion-demanda-s.csv",
+                            )
+                          }
+                          variant="outline"
+                        >
+                          Predicción de Demanda Semanal
+                        </Button>
+
+                        <Button
+                          onClick={() =>
+                            downloadCSV(
+                              predictiveAnalysis?.demandPrediction?.productTrends || [],
+                              "prediccion-productos.csv",
+                            )
+                          }
+                          variant="outline"
+                        >
+                          Predicción por Producto
+                        </Button>
+
+                        <Button
+                          onClick={() =>
+                            downloadCSV(predictiveAnalysis?.recoveryAnalysis || [], "analisis-recuperacion.csv")
+                          }
+                          variant="outline"
+                        >
+                          Análisis de Recuperación
+                        </Button>
                       </div>
-                    </div>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+              </Tabs>
+            )}
+          </>
+        )}
 
-                    {/* Daily Trends */}
-                    <div>
-                      <h3 className="font-semibold mb-3">Actividad por Día</h3>
-                      <div className="space-y-2">
-                        {analysisData.trendsData
-                          ?.filter((trend: any) => trend.Tipo === "Día Semana")
-                          .sort((a: any, b: any) => b.Actividad - a.Actividad)
-                          .map((trend: any, index: number) => (
-                            <div key={index} className="flex justify-between items-center">
-                              <span className="text-sm">{trend.Periodo}</span>
-                              <Badge variant="outline">{trend.Actividad}</Badge>
-                            </div>
-                          ))}
-                      </div>
-                    </div>
-
-                    {/* Monthly Trends */}
-                    <div>
-                      <h3 className="font-semibold mb-3">Actividad por Mes</h3>
-                      <div className="space-y-2">
-                        {analysisData.trendsData
-                          ?.filter((trend: any) => trend.Tipo === "Mes")
-                          .sort((a: any, b: any) => b.Actividad - a.Actividad)
-                          .slice(0, 5)
-                          .map((trend: any, index: number) => (
-                            <div key={index} className="flex justify-between items-center">
-                              <span className="text-sm">{trend.Periodo}</span>
-                              <Badge variant="outline">{trend.Actividad}</Badge>
-                            </div>
-                          ))}
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="export">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Download className="h-5 w-5" />
-                    Exportar Datos Completos
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <Button
-                      variant="outline"
-                      onClick={() => downloadCSV(analysisData.clientsData || [], "analisis_completo_clientes.csv")}
-                    >
-                      Análisis Completo de Clientes (CSV)
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => downloadCSV(analysisData.ordersData || [], "historial_completo_pedidos.csv")}
-                    >
-                      Historial Completo de Pedidos (CSV)
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => downloadCSV(analysisData.productsData || [], "analisis_productos.csv")}
-                    >
-                      Análisis de Productos (CSV)
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => downloadCSV(analysisData.trendsData || [], "tendencias_temporales.csv")}
-                    >
-                      Tendencias Temporales (CSV)
-                    </Button>
-                  </div>
-
-                  <div className="mt-6 p-4 bg-muted rounded-lg">
-                    <h4 className="font-semibold mb-2">Resumen del Análisis Completo:</h4>
-                    <ul className="text-sm space-y-1">
-                      <li>
-                        • <strong>Conversaciones procesadas:</strong> {allConversations.length}
-                      </li>
-                      <li>
-                        • <strong>Clientes analizados:</strong> {analysisData.totalClients}
-                      </li>
-                      <li>
-                        • <strong>Pedidos procesados:</strong> {analysisData.totalOrders}
-                      </li>
-                      <li>
-                        • <strong>Piezas totales:</strong> {analysisData.totalPieces}
-                      </li>
-                      <li>
-                        • <strong>Ingresos estimados:</strong> $
-                        {analysisData.clientsData
-                          ?.reduce((sum: number, c: any) => sum + (c["Total Gastado"] || 0), 0)
-                          .toLocaleString()}
-                      </li>
-                      <li>
-                        • <strong>Tiempo promedio de respuesta:</strong> {analysisData.avgResponseTime} horas
-                      </li>
-                    </ul>
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
+        {isProcessing && (
+          <Card>
+            <CardContent className="p-6 text-center">
+              <div className="space-y-4">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+                <p>Analizando conversaciones con IA...</p>
+                <p className="text-sm text-muted-foreground">
+                  Esto puede tomar unos minutos dependiendo de la cantidad de datos
+                </p>
+              </div>
+            </CardContent>
+          </Card>
         )}
       </div>
     </div>

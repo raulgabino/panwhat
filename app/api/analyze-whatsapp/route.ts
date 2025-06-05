@@ -30,6 +30,10 @@ interface ClientAnalysis {
   satisfactionScore: number
   complaints: number
   compliments: number
+  specificOrders: number
+  generalOrders: number
+  specificPieces: number
+  generalPieces: number
 }
 
 interface OrderData {
@@ -38,6 +42,7 @@ interface OrderData {
   products: string
   totalPieces: number
   orderType: string
+  orderCategory: "especifico" | "general"
   responseTime: number
   estimatedValue: number
   dayOfWeek: string
@@ -387,6 +392,10 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
 
   let totalOrders = 0
   let totalRevenue = 0
+  let totalSpecificOrders = 0
+  let totalGeneralOrders = 0
+  let totalSpecificPieces = 0
+  let totalGeneralPieces = 0
 
   // Contexto de conversación para procesamiento cronológico
   const context: ConversationContext = {
@@ -395,70 +404,60 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     clientStates: new Map(),
   }
 
-  // Productos específicos de panadería con regex mejoradas
+  // Productos específicos de panadería con regex mejoradas (sin "cambios")
   const productPatterns = {
     "conchas blancas": {
-      regex:
-        /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:conchas?|conchitas?)\s*(?:blancas?|blanquitas?)?\b/gi,
+      regex: /\b(?:conchas?|conchitas?)\s*(?:blancas?|blanquitas?)?\b/gi,
       estimatedPrice: 800,
     },
     "panes largos": {
-      regex:
-        /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:panes?|panecitos?)\s*(?:largos?|larguitos?)?\b/gi,
+      regex: /\b(?:panes?|panecitos?)\s*(?:largos?|larguitos?)?\b/gi,
       estimatedPrice: 1000,
     },
     armadillos: {
-      regex:
-        /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:armadillos?|armadillitos?)\b/gi,
+      regex: /\b(?:armadillos?|armadillitos?)\b/gi,
       estimatedPrice: 900,
     },
     pastelitos: {
-      regex:
-        /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:pastelitos?|pasteles?|pastelillos?)\b/gi,
+      regex: /\b(?:pastelitos?|pasteles?|pastelillos?)\b/gi,
       estimatedPrice: 1200,
     },
     donas: {
-      regex:
-        /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:donas?|donitas?|donutas?)\b/gi,
+      regex: /\b(?:donas?|donitas?|donutas?)\b/gi,
       estimatedPrice: 1100,
     },
     bisquete: {
-      regex: /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:bisquetes?|bisquetitos?)\b/gi,
+      regex: /\b(?:bisquetes?|bisquetitos?)\b/gi,
       estimatedPrice: 700,
     },
     roles: {
-      regex:
-        /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:roles?|rolitos?|rollitos?)\b/gi,
+      regex: /\b(?:roles?|rolitos?|rollitos?)\b/gi,
       estimatedPrice: 800,
     },
     ojos: {
-      regex: /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:ojos?|ojitos?)\b/gi,
+      regex: /\b(?:ojos?|ojitos?)\b/gi,
       estimatedPrice: 900,
     },
     hojaldrado: {
-      regex:
-        /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:hojaldrados?|hojaldraditos?)\b/gi,
+      regex: /\b(?:hojaldrados?|hojaldraditos?)\b/gi,
       estimatedPrice: 1000,
     },
     tostados: {
-      regex: /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:tostados?|tostaditos?)\b/gi,
+      regex: /\b(?:tostados?|tostaditos?)\b/gi,
       estimatedPrice: 1100,
     },
     "pan blanco": {
-      regex:
-        /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:panes?)\s*(?:blancos?|blanquitos?)\b/gi,
+      regex: /\b(?:panes?)\s*(?:blancos?|blanquitos?)\b/gi,
       estimatedPrice: 600,
     },
-    cambios: {
-      regex: /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:cambios?|cambiitos?)\b/gi,
-      estimatedPrice: 800,
-    },
     surtidas: {
-      regex:
-        /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:piezas?\s*)?(?:surtidas?|surtiditas?|variadas?)\b/gi,
+      regex: /\b(?:piezas?\s*)?(?:surtidas?|surtiditas?|variadas?)\b/gi,
       estimatedPrice: 850,
     },
   }
+
+  // Palabras clave para pedidos generales
+  const generalOrderKeywords = /\b(?:piezas?|surtido|panes?)\b/gi
 
   // Función para convertir números en texto a números
   const textToNumber = (text: string): number => {
@@ -474,9 +473,50 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
       ocho: 8,
       nueve: 9,
       diez: 10,
+      once: 11,
+      doce: 12,
+      trece: 13,
+      catorce: 14,
+      quince: 15,
+      veinte: 20,
+      treinta: 30,
+      cuarenta: 40,
+      cincuenta: 50,
     }
     const lowerText = text.toLowerCase()
     return numberMap[lowerText] || Number.parseInt(text) || 0
+  }
+
+  // Función para extraer números de un texto
+  const extractNumbers = (text: string): number[] => {
+    const numbers: number[] = []
+
+    // Buscar números escritos en dígitos
+    const digitMatches = text.match(/\b\d+\b/g)
+    if (digitMatches) {
+      numbers.push(...digitMatches.map(Number))
+    }
+
+    // Buscar números escritos en palabras
+    const words = text.toLowerCase().split(/\s+/)
+    for (const word of words) {
+      const num = textToNumber(word)
+      if (num > 0) {
+        numbers.push(num)
+      }
+    }
+
+    return numbers
+  }
+
+  // Función para determinar si un mensaje contiene un pedido específico
+  const containsSpecificProducts = (content: string): boolean => {
+    return Object.values(productPatterns).some((pattern) => pattern.regex.test(content))
+  }
+
+  // Función para determinar si un mensaje contiene un pedido general
+  const containsGeneralOrder = (content: string): boolean => {
+    return generalOrderKeywords.test(content) && !containsSpecificProducts(content)
   }
 
   // Procesar mensajes cronológicamente
@@ -513,6 +553,10 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
           satisfactionScore: 0,
           complaints: 0,
           compliments: 0,
+          specificOrders: 0,
+          generalOrders: 0,
+          specificPieces: 0,
+          generalPieces: 0,
         })
       }
 
@@ -578,60 +622,102 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
         clientAnalysis.noResponseDays++
       }
 
-      // Detectar pedidos buscando patrones de productos
-      let orderPieces = 0
-      let orderValue = 0
-      const detectedProducts: string[] = []
+      // Analizar si el mensaje contiene un pedido
+      const isSpecificOrder = containsSpecificProducts(message.content)
+      const isGeneralOrder = containsGeneralOrder(message.content)
 
-      // Buscar conteo explícito de piezas
-      const piecesMatch = message.content.match(/(\d+)\s*piezas?/i)
-      if (piecesMatch) {
-        orderPieces = Number.parseInt(piecesMatch[1])
-      }
+      if (isSpecificOrder || isGeneralOrder) {
+        let orderPieces = 0
+        let orderValue = 0
+        const detectedProducts: string[] = []
+        let orderCategory: "especifico" | "general" = "general"
 
-      // Detectar productos específicos
-      Object.entries(productPatterns).forEach(([productName, pattern]) => {
-        const matches = [...message.content.matchAll(pattern.regex)]
-        matches.forEach((match) => {
-          const countText = match[1]
-          const count = textToNumber(countText)
+        // Extraer números del mensaje
+        const numbersInMessage = extractNumbers(message.content)
 
-          if (count > 0) {
-            // Actualizar contadores de productos del cliente
-            const existingProduct = clientAnalysis.preferredProducts.find((p) => p.product === productName)
-            if (existingProduct) {
-              existingProduct.count += count
-            } else {
-              clientAnalysis.preferredProducts.push({ product: productName, count, percentage: 0 })
+        if (isSpecificOrder) {
+          orderCategory = "especifico"
+
+          // Detectar productos específicos
+          Object.entries(productPatterns).forEach(([productName, pattern]) => {
+            if (pattern.regex.test(message.content)) {
+              // Buscar números en el contexto del producto
+              let productCount = 0
+
+              // Si hay números en el mensaje, usar el primero como cantidad
+              if (numbersInMessage.length > 0) {
+                productCount = numbersInMessage[0]
+              } else {
+                // Si no hay números explícitos, asumir 1
+                productCount = 1
+              }
+
+              if (productCount > 0) {
+                // Actualizar contadores de productos del cliente
+                const existingProduct = clientAnalysis.preferredProducts.find((p) => p.product === productName)
+                if (existingProduct) {
+                  existingProduct.count += productCount
+                } else {
+                  clientAnalysis.preferredProducts.push({ product: productName, count: productCount, percentage: 0 })
+                }
+
+                // Actualizar contadores globales
+                products.set(productName, (products.get(productName) || 0) + productCount)
+
+                detectedProducts.push(`${productCount} ${productName}`)
+                orderPieces += productCount
+                orderValue += productCount * pattern.estimatedPrice
+              }
             }
+          })
+        } else if (isGeneralOrder) {
+          orderCategory = "general"
 
-            // Actualizar contadores globales
-            products.set(productName, (products.get(productName) || 0) + count)
-
-            detectedProducts.push(`${count} ${productName}`)
-            if (!piecesMatch) orderPieces += count
-            orderValue += count * pattern.estimatedPrice
+          // Para pedidos generales, buscar cantidad de piezas
+          const piecesMatch = message.content.match(/(\d+)\s*piezas?/i)
+          if (piecesMatch) {
+            orderPieces = Number.parseInt(piecesMatch[1])
+          } else if (numbersInMessage.length > 0) {
+            // Si hay números pero no se especifica "piezas", usar el primer número
+            orderPieces = numbersInMessage[0]
+          } else {
+            // Si no hay números, asumir un pedido pequeño
+            orderPieces = 5
           }
-        })
-      })
 
-      // Buscar precios explícitos mencionados
-      const priceRegex = /\$?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)/g
-      const prices = message.content.match(priceRegex)
-      if (prices) {
-        prices.forEach((priceStr) => {
-          const price = Number.parseFloat(priceStr.replace(/\$|\.|,/g, ""))
-          if (price > 1000) {
-            orderValue = Math.max(orderValue, price)
-          }
-        })
-      }
+          detectedProducts.push(`${orderPieces} piezas surtidas`)
+          orderValue = orderPieces * 850 // Precio promedio por pieza
+        }
 
-      // Si parece un pedido (tiene productos o piezas)
-      if (orderPieces > 0 || detectedProducts.length > 0) {
+        // Buscar precios explícitos mencionados
+        const priceRegex = /\$?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)/g
+        const prices = message.content.match(priceRegex)
+        if (prices) {
+          prices.forEach((priceStr) => {
+            const price = Number.parseFloat(priceStr.replace(/\$|\.|,/g, ""))
+            if (price > 1000) {
+              orderValue = Math.max(orderValue, price)
+            }
+          })
+        }
+
+        // Registrar el pedido
         clientAnalysis.totalOrders++
         clientAnalysis.totalPieces += orderPieces
         totalOrders++
+
+        // Actualizar contadores por categoría
+        if (orderCategory === "especifico") {
+          clientAnalysis.specificOrders++
+          clientAnalysis.specificPieces += orderPieces
+          totalSpecificOrders++
+          totalSpecificPieces += orderPieces
+        } else {
+          clientAnalysis.generalOrders++
+          clientAnalysis.generalPieces += orderPieces
+          totalGeneralOrders++
+          totalGeneralPieces += orderPieces
+        }
 
         // Usar valor estimado si no hay precio explícito
         if (orderValue === 0 && orderPieces > 0) {
@@ -652,6 +738,7 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
           products: detectedProducts.join(", ") || message.content,
           totalPieces: orderPieces,
           orderType: orderPieces >= 25 ? "Grande" : orderPieces >= 15 ? "Mediano" : "Pequeño",
+          orderCategory,
           responseTime:
             clientState.responseTimes.length > 0 ? clientState.responseTimes[clientState.responseTimes.length - 1] : 0,
           estimatedValue: orderValue,
@@ -726,6 +813,8 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     if (analysis.satisfactionScore > 2) patterns.push("Cliente satisfecho")
     if (analysis.satisfactionScore < -1) patterns.push("Cliente insatisfecho")
     if (analysis.avgOrderValue > 20000) patterns.push("Alto valor")
+    if (analysis.specificOrders > analysis.generalOrders) patterns.push("Prefiere productos específicos")
+    if (analysis.generalOrders > analysis.specificOrders) patterns.push("Prefiere pedidos generales")
     analysis.orderPatterns = patterns
 
     // Calcular puntuación de dificultad
@@ -763,7 +852,11 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
   const clientsData = clientResults.map(({ analysis, gptAnalysis }) => ({
     "Nombre Cliente": analysis.name,
     "Total Pedidos": analysis.totalOrders,
+    "Pedidos Específicos": analysis.specificOrders,
+    "Pedidos Generales": analysis.generalOrders,
     "Total Piezas": analysis.totalPieces,
+    "Piezas Específicas": analysis.specificPieces,
+    "Piezas Generales": analysis.generalPieces,
     "Total Gastado": analysis.totalSpent,
     "Valor Promedio Pedido": Math.round(analysis.avgOrderValue),
     "Promedio Piezas/Pedido": Math.round(analysis.avgPiecesPerOrder * 10) / 10,
@@ -830,6 +923,7 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     Productos: order.products,
     "Total Piezas": order.totalPieces,
     "Tipo Pedido": order.orderType,
+    "Categoría Pedido": order.orderCategory,
     "Tiempo Respuesta (hrs)": order.responseTime,
     "Valor Estimado": order.estimatedValue,
     "Día de la Semana": order.dayOfWeek,
@@ -839,7 +933,11 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
   return {
     totalClients: clients.size,
     totalOrders,
+    totalSpecificOrders,
+    totalGeneralOrders,
     totalPieces: Array.from(clients.values()).reduce((sum, client) => sum + client.totalPieces, 0),
+    totalSpecificPieces,
+    totalGeneralPieces,
     totalRevenue: Array.from(clients.values()).reduce((sum, client) => sum + client.totalSpent, 0),
     avgResponseTime:
       Math.round(

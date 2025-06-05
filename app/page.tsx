@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import { Upload, Download, BarChart3, Users, Clock, TrendingUp, AlertTriangle, Star, Plus, Trash2 } from "lucide-react"
+import { Upload, Download, BarChart3, Users, TrendingUp, AlertTriangle, Star, Plus, Trash2 } from "lucide-react"
 import {
   BarChart,
   Bar,
@@ -24,6 +24,7 @@ import {
   Area,
   AreaChart,
 } from "recharts"
+import { Progress } from "@/components/ui/progress"
 
 export default function WhatsAppAnalyzer() {
   const [conversations, setConversations] = useState("")
@@ -975,8 +976,20 @@ export default function WhatsAppAnalyzer() {
                     <div className="flex items-center space-x-2">
                       <BarChart3 className="h-4 w-4 text-green-600" />
                       <div>
-                        <p className="text-2xl font-bold">{analysisData.totalOrders || 0}</p>
-                        <p className="text-sm text-muted-foreground">Pedidos Totales</p>
+                        <p className="text-2xl font-bold">{analysisData.totalSpecificOrders || 0}</p>
+                        <p className="text-sm text-muted-foreground">Pedidos Específicos</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardContent className="p-6">
+                    <div className="flex items-center space-x-2">
+                      <BarChart3 className="h-4 w-4 text-blue-600" />
+                      <div>
+                        <p className="text-2xl font-bold">{analysisData.totalGeneralOrders || 0}</p>
+                        <p className="text-sm text-muted-foreground">Pedidos Generales</p>
                       </div>
                     </div>
                   </CardContent>
@@ -987,8 +1000,8 @@ export default function WhatsAppAnalyzer() {
                     <div className="flex items-center space-x-2">
                       <TrendingUp className="h-4 w-4 text-purple-600" />
                       <div>
-                        <p className="text-2xl font-bold">{analysisData.totalPieces || 0}</p>
-                        <p className="text-sm text-muted-foreground">Piezas Totales</p>
+                        <p className="text-2xl font-bold">{analysisData.totalSpecificPieces || 0}</p>
+                        <p className="text-sm text-muted-foreground">Piezas Específicas</p>
                       </div>
                     </div>
                   </CardContent>
@@ -997,22 +1010,10 @@ export default function WhatsAppAnalyzer() {
                 <Card>
                   <CardContent className="p-6">
                     <div className="flex items-center space-x-2">
-                      <Clock className="h-4 w-4 text-orange-600" />
+                      <TrendingUp className="h-4 w-4 text-orange-600" />
                       <div>
-                        <p className="text-2xl font-bold">{analysisData.avgResponseTime || 0}h</p>
-                        <p className="text-sm text-muted-foreground">Tiempo Resp. Promedio</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardContent className="p-6">
-                    <div className="flex items-center space-x-2">
-                      <Upload className="h-4 w-4 text-indigo-600" />
-                      <div>
-                        <p className="text-2xl font-bold">{allConversations.length}</p>
-                        <p className="text-sm text-muted-foreground">Conversaciones</p>
+                        <p className="text-2xl font-bold">{analysisData.totalGeneralPieces || 0}</p>
+                        <p className="text-sm text-muted-foreground">Piezas Generales</p>
                       </div>
                     </div>
                   </CardContent>
@@ -1106,6 +1107,106 @@ export default function WhatsAppAnalyzer() {
                         </div>
                       </div>
                     </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Desglose por Tipo de Pedido */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>📊 Desglose por Tipo de Pedido</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                      <h4 className="font-semibold mb-3 text-green-600">Pedidos Específicos</h4>
+                      <div className="space-y-3">
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm">Total de pedidos específicos:</span>
+                          <Badge variant="default">{analysisData.totalSpecificOrders || 0}</Badge>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm">Porcentaje del total:</span>
+                          <Badge variant="secondary">
+                            {analysisData.totalOrders > 0
+                              ? Math.round(((analysisData.totalSpecificOrders || 0) / analysisData.totalOrders) * 100)
+                              : 0}
+                            %
+                          </Badge>
+                        </div>
+                        <Progress
+                          value={
+                            analysisData.totalOrders > 0
+                              ? ((analysisData.totalSpecificOrders || 0) / analysisData.totalOrders) * 100
+                              : 0
+                          }
+                          className="h-2"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Productos específicos como donas, conchas, pastelitos, etc.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div>
+                      <h4 className="font-semibold mb-3 text-blue-600">Pedidos Generales</h4>
+                      <div className="space-y-3">
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm">Total de pedidos generales:</span>
+                          <Badge variant="default">{analysisData.totalGeneralOrders || 0}</Badge>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm">Porcentaje del total:</span>
+                          <Badge variant="secondary">
+                            {analysisData.totalOrders > 0
+                              ? Math.round(((analysisData.totalGeneralOrders || 0) / analysisData.totalOrders) * 100)
+                              : 0}
+                            %
+                          </Badge>
+                        </div>
+                        <Progress
+                          value={
+                            analysisData.totalOrders > 0
+                              ? ((analysisData.totalGeneralOrders || 0) / analysisData.totalOrders) * 100
+                              : 0
+                          }
+                          className="h-2"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Pedidos de "piezas", "surtido" o "panes" sin especificar producto.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-6 p-4 bg-muted rounded-lg">
+                    <h4 className="font-semibold mb-2">💡 Insights de Categorización:</h4>
+                    <ul className="text-sm space-y-1">
+                      <li>
+                        • <strong>Ratio Específico/General:</strong>{" "}
+                        {analysisData.totalGeneralOrders > 0
+                          ? Math.round(
+                              ((analysisData.totalSpecificOrders || 0) / (analysisData.totalGeneralOrders || 1)) * 100,
+                            ) / 100
+                          : "N/A"}
+                      </li>
+                      <li>
+                        • <strong>Piezas promedio por pedido específico:</strong>{" "}
+                        {analysisData.totalSpecificOrders > 0
+                          ? Math.round(
+                              ((analysisData.totalSpecificPieces || 0) / (analysisData.totalSpecificOrders || 1)) * 10,
+                            ) / 10
+                          : 0}
+                      </li>
+                      <li>
+                        • <strong>Piezas promedio por pedido general:</strong>{" "}
+                        {analysisData.totalGeneralOrders > 0
+                          ? Math.round(
+                              ((analysisData.totalGeneralPieces || 0) / (analysisData.totalGeneralOrders || 1)) * 10,
+                            ) / 10
+                          : 0}
+                      </li>
+                    </ul>
                   </div>
                 </CardContent>
               </Card>
@@ -1519,6 +1620,18 @@ export default function WhatsAppAnalyzer() {
                                 </p>
                                 <p>
                                   <strong>Último Pedido:</strong> {client["Último Pedido"]}
+                                </p>
+                                <p>
+                                  <strong>Pedidos Específicos:</strong> {client["Pedidos Específicos"] || 0}
+                                </p>
+                                <p>
+                                  <strong>Pedidos Generales:</strong> {client["Pedidos Generales"] || 0}
+                                </p>
+                                <p>
+                                  <strong>Piezas Específicas:</strong> {client["Piezas Específicas"] || 0}
+                                </p>
+                                <p>
+                                  <strong>Piezas Generales:</strong> {client["Piezas Generales"] || 0}
                                 </p>
                               </div>
                             </div>

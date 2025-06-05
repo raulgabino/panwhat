@@ -1,7 +1,13 @@
 import { kv } from "@vercel/kv"
 import { type NextRequest, NextResponse } from "next/server"
 
-export async function GET(request: NextRequest, { params }: { params: { jobId: string } }) {
+interface RouteParams {
+  params: {
+    jobId: string
+  }
+}
+
+export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const { jobId } = params
 

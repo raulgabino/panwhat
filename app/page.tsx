@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { parseISO } from "date-fns"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Textarea } from "@/components/ui/textarea"
@@ -22,8 +21,6 @@ import {
   Clock,
 } from "lucide-react"
 import { Progress } from "@/components/ui/progress"
-import { Skeleton } from "@/components/ui/skeleton"
-import { useVirtualizer } from "@tanstack/react-virtual"
 
 export default function WhatsAppAnalyzer() {
   const [conversations, setConversations] = useState("")
@@ -56,7 +53,6 @@ export default function WhatsAppAnalyzer() {
   // Estados para otras secciones
   const [trends, setTrends] = useState<any[]>([])
   const [trendsLoading, setTrendsLoading] = useState(false)
-  const [predictiveAnalysis, setPredictiveAnalysis] = useState<any>(null)
 
   const [conversationHistory, setConversationHistory] = useState<Array<{ id: number; preview: string; date: string }>>(
     [],
@@ -205,20 +201,6 @@ export default function WhatsAppAnalyzer() {
     }
   }
 
-  // Función para obtener análisis predictivo
-  const fetchPredictiveAnalysis = async () => {
-    if (!jobId) return
-
-    try {
-      const response = await fetch(`/api/jobs/results/${jobId}?part=predictive`)
-      const data = await response.json()
-
-      setPredictiveAnalysis(data.predictiveAnalysis)
-    } catch (error) {
-      console.error("Error fetching predictive analysis:", error)
-    }
-  }
-
   const handleAddConversation = () => {
     if (!conversations.trim()) {
       alert("Por favor, ingresa una conversación antes de agregarla")
@@ -255,7 +237,6 @@ export default function WhatsAppAnalyzer() {
     setProducts([])
     setOrders([])
     setTrends([])
-    setPredictiveAnalysis(null)
 
     try {
       const combinedConversations = allConversations.join("\n")
@@ -298,7 +279,6 @@ export default function WhatsAppAnalyzer() {
       setProducts([])
       setOrders([])
       setTrends([])
-      setPredictiveAnalysis(null)
       setConversations("")
       setJobId(null)
       setJobStatus("idle")
@@ -335,11 +315,6 @@ export default function WhatsAppAnalyzer() {
       case "trends":
         if (trends.length === 0) {
           fetchTrends()
-        }
-        break
-      case "gpt-insights":
-        if (!predictiveAnalysis) {
-          fetchPredictiveAnalysis()
         }
         break
     }
@@ -395,37 +370,13 @@ export default function WhatsAppAnalyzer() {
     )
   }
 
-  // Función para formatear fechas
-  const formatDate = (dateString: string) => {
-    try {
-      const date = parseISO(dateString)
-      return date.toLocaleDateString("es-ES", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-      })
-    } catch (error) {
-      return "Fecha inválida"
-    }
-  }
-
-  // Virtualización para la tabla de clientes
-  const parentRef = useRef<HTMLDivElement>(null)
-
-  const virtualizer = useVirtualizer({
-    count: clients.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 60,
-    overscan: 5,
-  })
-
   // Función para obtener el mensaje de estado
   const getStatusMessage = () => {
     switch (jobStatus) {
       case "pending":
         return "Trabajo en cola, esperando procesamiento..."
       case "processing":
-        return "Analizando conversaciones con IA..."
+        return "Analizando conversaciones..."
       case "completed":
         return "Análisis completado"
       case "failed":
@@ -723,68 +674,39 @@ export default function WhatsAppAnalyzer() {
                 </CardHeader>
                 <CardContent>
                   {clientsLoading ? (
-                    <div className="space-y-4">
-                      {Array.from({ length: 10 }).map((_, i) => (
-                        <div key={i} className="flex items-center space-x-4">
-                          <Skeleton className="h-4 w-[200px]" />
-                          <Skeleton className="h-4 w-[100px]" />
-                          <Skeleton className="h-4 w-[80px]" />
-                          <Skeleton className="h-4 w-[120px]" />
-                        </div>
-                      ))}
+                    <div className="text-center py-8">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+                      <p className="mt-2">Cargando clientes...</p>
                     </div>
                   ) : (
                     <>
                       <div className="rounded-md border">
-                        <div ref={parentRef} className="h-[600px] overflow-auto">
-                          <Table>
-                            <TableHeader>
-                              <TableRow>
-                                <TableHead>Cliente</TableHead>
-                                <TableHead>Total Gastado</TableHead>
-                                <TableHead>Pedidos</TableHead>
-                                <TableHead>Frecuencia</TableHead>
-                                <TableHead>Último Pedido</TableHead>
-                                <TableHead>Dificultad</TableHead>
-                                <TableHead>Riesgo</TableHead>
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Cliente</TableHead>
+                              <TableHead>Total Gastado</TableHead>
+                              <TableHead>Pedidos</TableHead>
+                              <TableHead>Frecuencia</TableHead>
+                              <TableHead>Último Pedido</TableHead>
+                              <TableHead>Dificultad</TableHead>
+                              <TableHead>Riesgo</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {clients.map((client: any, index: number) => (
+                              <TableRow key={index}>
+                                <TableCell className="font-medium">{client["Nombre Cliente"]}</TableCell>
+                                <TableCell>${client["Total Gastado"]?.toLocaleString()}</TableCell>
+                                <TableCell>{client["Total Pedidos"]}</TableCell>
+                                <TableCell>{client["Frecuencia Semanal"]} / semana</TableCell>
+                                <TableCell>{client["Último Pedido"]}</TableCell>
+                                <TableCell>{getDifficultyBadge(client["Puntuación Dificultad"])}</TableCell>
+                                <TableCell>{getRiskBadge(client["Nivel de Riesgo"])}</TableCell>
                               </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              <div
-                                style={{
-                                  height: `${virtualizer.getTotalSize()}px`,
-                                  width: "100%",
-                                  position: "relative",
-                                }}
-                              >
-                                {virtualizer.getVirtualItems().map((virtualItem) => {
-                                  const client = clients[virtualItem.index]
-                                  return (
-                                    <TableRow
-                                      key={virtualItem.key}
-                                      style={{
-                                        position: "absolute",
-                                        top: 0,
-                                        left: 0,
-                                        width: "100%",
-                                        height: `${virtualItem.size}px`,
-                                        transform: `translateY(${virtualItem.start}px)`,
-                                      }}
-                                    >
-                                      <TableCell className="font-medium">{client["Nombre Cliente"]}</TableCell>
-                                      <TableCell>${client["Total Gastado"]?.toLocaleString()}</TableCell>
-                                      <TableCell>{client["Total Pedidos"]}</TableCell>
-                                      <TableCell>{client["Frecuencia Semanal"]} / semana</TableCell>
-                                      <TableCell>{formatDate(client["Último Pedido"])}</TableCell>
-                                      <TableCell>{getDifficultyBadge(client["Puntuación Dificultad"])}</TableCell>
-                                      <TableCell>{getRiskBadge(client["Nivel de Riesgo"])}</TableCell>
-                                    </TableRow>
-                                  )
-                                })}
-                              </div>
-                            </TableBody>
-                          </Table>
-                        </div>
+                            ))}
+                          </TableBody>
+                        </Table>
                       </div>
 
                       {/* Paginación */}
@@ -829,14 +751,9 @@ export default function WhatsAppAnalyzer() {
                 </CardHeader>
                 <CardContent>
                   {productsLoading ? (
-                    <div className="space-y-4">
-                      {Array.from({ length: 10 }).map((_, i) => (
-                        <div key={i} className="flex items-center space-x-4">
-                          <Skeleton className="h-4 w-[200px]" />
-                          <Skeleton className="h-4 w-[100px]" />
-                          <Skeleton className="h-4 w-[80px]" />
-                        </div>
-                      ))}
+                    <div className="text-center py-8">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+                      <p className="mt-2">Cargando productos...</p>
                     </div>
                   ) : (
                     <>
@@ -900,8 +817,9 @@ export default function WhatsAppAnalyzer() {
                 </CardHeader>
                 <CardContent>
                   {trendsLoading ? (
-                    <div className="space-y-4">
-                      <Skeleton className="h-[300px] w-full" />
+                    <div className="text-center py-8">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+                      <p className="mt-2">Cargando tendencias...</p>
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -965,15 +883,9 @@ export default function WhatsAppAnalyzer() {
                 </CardHeader>
                 <CardContent>
                   {ordersLoading ? (
-                    <div className="space-y-4">
-                      {Array.from({ length: 10 }).map((_, i) => (
-                        <div key={i} className="flex items-center space-x-4">
-                          <Skeleton className="h-4 w-[100px]" />
-                          <Skeleton className="h-4 w-[150px]" />
-                          <Skeleton className="h-4 w-[200px]" />
-                          <Skeleton className="h-4 w-[80px]" />
-                        </div>
-                      ))}
+                    <div className="text-center py-8">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+                      <p className="mt-2">Cargando pedidos...</p>
                     </div>
                   ) : (
                     <>
@@ -992,7 +904,7 @@ export default function WhatsAppAnalyzer() {
                           <TableBody>
                             {orders.map((order: any, index: number) => (
                               <TableRow key={index}>
-                                <TableCell>{formatDate(order.Fecha)}</TableCell>
+                                <TableCell>{order.Fecha}</TableCell>
                                 <TableCell className="font-medium">{order.Cliente}</TableCell>
                                 <TableCell>{order.Productos}</TableCell>
                                 <TableCell>{order["Total Piezas"]}</TableCell>

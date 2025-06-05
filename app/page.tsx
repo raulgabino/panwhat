@@ -24,7 +24,6 @@ import {
   Area,
   AreaChart,
 } from "recharts"
-import { toast } from "sonner"
 
 export default function WhatsAppAnalyzer() {
   const [conversations, setConversations] = useState("")
@@ -74,7 +73,7 @@ export default function WhatsAppAnalyzer() {
 
   const handleAddConversation = () => {
     if (!conversations.trim()) {
-      toast.error("Por favor, ingresa una conversación antes de agregarla")
+      alert("Por favor, ingresa una conversación antes de agregarla")
       return
     }
 
@@ -86,7 +85,7 @@ export default function WhatsAppAnalyzer() {
     setConversationHistory((prev) => [...prev, { id: newId, preview, date }])
     setConversations("")
 
-    toast.success("Conversación agregada exitosamente")
+    alert("Conversación agregada exitosamente")
   }
 
   const handleRemoveConversation = (index: number) => {
@@ -96,7 +95,7 @@ export default function WhatsAppAnalyzer() {
 
   const handleAnalyzeAll = async () => {
     if (allConversations.length === 0) {
-      toast.error("Por favor, agrega al menos una conversación antes de analizar")
+      alert("Por favor, agrega al menos una conversación antes de analizar")
       return
     }
 
@@ -120,43 +119,26 @@ export default function WhatsAppAnalyzer() {
 
       const data = await response.json()
       setAnalysisData(data)
-      toast.success("Análisis completado", {
-        description: `Se analizaron ${data.totalClients} clientes y ${data.totalOrders} pedidos.`,
-      })
     } catch (error) {
       console.error("Error analyzing conversations:", error)
-      toast.error("Error al procesar", {
-        description: "Hubo un problema al analizar las conversaciones.",
-      })
+      alert("Error al procesar las conversaciones")
     } finally {
       setIsProcessing(false)
     }
   }
 
   const handleClearAll = () => {
-    toast("¿Eliminar todas las conversaciones?", {
-      description: "Esta acción no se puede deshacer.",
-      action: {
-        label: "Eliminar",
-        onClick: () => {
-          setAllConversations([])
-          setConversationHistory([])
-          setAnalysisData(null)
-          setConversations("")
+    if (confirm("¿Estás seguro de que quieres eliminar todas las conversaciones?")) {
+      setAllConversations([])
+      setConversationHistory([])
+      setAnalysisData(null)
+      setConversations("")
 
-          // Limpiar también localStorage
-          localStorage.removeItem("whatsapp-conversations")
-          localStorage.removeItem("whatsapp-history")
-          localStorage.removeItem("whatsapp-analysis")
-
-          toast.success("Datos eliminados", { description: "Todas las conversaciones han sido eliminadas." })
-        },
-      },
-      cancel: {
-        label: "Cancelar",
-        onClick: () => {},
-      },
-    })
+      // Limpiar también localStorage
+      localStorage.removeItem("whatsapp-conversations")
+      localStorage.removeItem("whatsapp-history")
+      localStorage.removeItem("whatsapp-analysis")
+    }
   }
 
   const downloadCSV = (data: any[], filename: string) => {
@@ -918,11 +900,9 @@ export default function WhatsAppAnalyzer() {
                   if (saved) {
                     const conversations = JSON.parse(saved)
                     setAllConversations(conversations)
-                    toast.success("Datos recuperados", {
-                      description: `Se recuperaron ${conversations.length} conversaciones guardadas.`,
-                    })
+                    alert(`Recuperados ${conversations.length} conversaciones guardadas`)
                   } else {
-                    toast.error("No hay datos guardados para recuperar")
+                    alert("No hay datos guardados para recuperar")
                   }
                 }}
                 variant="outline"

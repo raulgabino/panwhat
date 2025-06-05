@@ -200,7 +200,7 @@ export default function WhatsAppAnalyzer() {
     // 1. Segmentación automática de clientes
     const clientSegments = segmentClients(analysisData.clientsData)
 
-    // 2. Predicción de demanda mejorada
+    // 2. Predicción de demanda
     const demandPrediction = predictDemand(analysisData.ordersData, analysisData.productsData)
 
     // 3. Análisis de riesgo de abandono
@@ -212,16 +212,12 @@ export default function WhatsAppAnalyzer() {
     // 5. Análisis de ciclo de vida
     const lifecycleAnalysis = analyzeClientLifecycle(analysisData.clientsData)
 
-    // 6. NUEVO: Análisis CLV para recuperación de clientes
-    const recoveryAnalysis = calculateCustomerLifetimeValue(analysisData.clientsData)
-
     return {
       clientSegments,
       demandPrediction,
       churnRisk,
       growthOpportunities,
       lifecycleAnalysis,
-      recoveryAnalysis, // Agregar esta línea
     }
   }
 
@@ -261,7 +257,7 @@ export default function WhatsAppAnalyzer() {
   const predictDemand = (ordersData: any[], productsData: any[]) => {
     if (!ordersData || ordersData.length === 0) return null
 
-    // Análisis avanzado de tendencias por día de la semana
+    // Análisis de tendencias por día de la semana
     const weeklyTrends = Array(7)
       .fill(0)
       .map((_, day) => {
@@ -271,144 +267,28 @@ export default function WhatsAppAnalyzer() {
           return orderDate.getDay() === day
         })
 
-        if (dayOrders.length === 0) {
-          return {
-            day: dayName,
-            avgDemand: 0,
-            orderCount: 0,
-            predictedDemand: 0,
-            confidence: "Sin datos",
-            trend: "Sin datos",
-            seasonalFactor: 1,
-            recommendations: ["No hay datos históricos para este día"],
-          }
-        }
-
-        // Calcular tendencia temporal (últimos vs primeros pedidos)
-        const sortedOrders = dayOrders.sort((a, b) => new Date(a.Fecha).getTime() - new Date(b.Fecha).getTime())
-        const recentOrders = sortedOrders.slice(-Math.ceil(sortedOrders.length / 3))
-        const oldOrders = sortedOrders.slice(0, Math.ceil(sortedOrders.length / 3))
-
-        const recentAvg =
-          recentOrders.length > 0
-            ? recentOrders.reduce((sum, order) => sum + (order["Total Piezas"] || 0), 0) / recentOrders.length
-            : 0
-        const oldAvg =
-          oldOrders.length > 0
-            ? oldOrders.reduce((sum, order) => sum + (order["Total Piezas"] || 0), 0) / oldOrders.length
-            : 0
-
-        const trendPercentage = oldAvg > 0 ? ((recentAvg - oldAvg) / oldAvg) * 100 : 0
-
-        // Análisis estacional (por mes)
-        const monthlyVariation = dayOrders.reduce((acc, order) => {
-          const month = new Date(order.Fecha).getMonth()
-          if (!acc[month]) acc[month] = []
-          acc[month].push(order["Total Piezas"] || 0)
-          return acc
-        }, {} as any)
-
-        const currentMonth = new Date().getMonth()
-        const seasonalFactor = monthlyVariation[currentMonth]
-          ? monthlyVariation[currentMonth].reduce((sum: number, val: number) => sum + val, 0) /
-              monthlyVariation[currentMonth].length /
-              recentAvg || 1
-          : 1
-
-        // Cálculos base
         const totalPieces = dayOrders.reduce((sum, order) => sum + (order["Total Piezas"] || 0), 0)
-        const avgPieces = totalPieces / dayOrders.length
-
-        // Predicción mejorada con múltiples factores
-        let predictedDemand = avgPieces
-
-        // Aplicar tendencia
-        if (trendPercentage > 10) {
-          predictedDemand *= 1.15 // Crecimiento fuerte
-        } else if (trendPercentage > 0) {
-          predictedDemand *= 1.05 // Crecimiento moderado
-        } else if (trendPercentage < -10) {
-          predictedDemand *= 0.9 // Declive
-        }
-
-        // Aplicar factor estacional
-        predictedDemand *= Math.max(0.7, Math.min(1.3, seasonalFactor))
-
-        // Factor de día específico (lunes suele ser más alto después del fin de semana)
-        if (day === 1) {
-          // Lunes
-          predictedDemand *= 1.1 // 10% más por efecto "lunes"
-        } else if (day === 0 || day === 6) {
-          // Fin de semana
-          predictedDemand *= 0.8 // 20% menos
-        }
-
-        // Buffer de seguridad basado en variabilidad
-        const variance =
-          dayOrders.reduce((sum, order) => {
-            const pieces = order["Total Piezas"] || 0
-            return sum + Math.pow(pieces - avgPieces, 2)
-          }, 0) / dayOrders.length
-        const stdDev = Math.sqrt(variance)
-        const variabilityBuffer = stdDev / avgPieces > 0.3 ? 1.2 : 1.1
-
-        predictedDemand *= variabilityBuffer
-
-        // Generar recomendaciones específicas
-        const recommendations = []
-        if (day === 1) {
-          // Lunes
-          recommendations.push("Preparar 10-15% más que el promedio (efecto post fin de semana)")
-          if (trendPercentage > 5) {
-            recommendations.push("Tendencia creciente detectada - considerar aumentar producción")
-          }
-        }
-        if (stdDev / avgPieces > 0.4) {
-          recommendations.push("Alta variabilidad - mantener stock de seguridad")
-        }
-        if (seasonalFactor > 1.1) {
-          recommendations.push("Mes de alta demanda - aumentar producción base")
-        } else if (seasonalFactor < 0.9) {
-          recommendations.push("Mes de baja demanda - reducir producción base")
-        }
+        const avgPieces = dayOrders.length > 0 ? totalPieces / dayOrders.length : 0
 
         return {
           day: dayName,
           avgDemand: Math.round(avgPieces),
           orderCount: dayOrders.length,
-          predictedDemand: Math.round(predictedDemand),
-          confidence: dayOrders.length > 8 ? "Alta" : dayOrders.length > 4 ? "Media" : "Baja",
-          trend: trendPercentage > 5 ? "Creciente" : trendPercentage < -5 ? "Declinante" : "Estable",
-          trendPercentage: Math.round(trendPercentage),
-          seasonalFactor: Math.round(seasonalFactor * 100) / 100,
-          variability: Math.round((stdDev / avgPieces) * 100),
-          recommendations,
+          predictedDemand: Math.round(avgPieces * 1.1), // 10% buffer
+          confidence: dayOrders.length > 5 ? "Alta" : dayOrders.length > 2 ? "Media" : "Baja",
         }
       })
 
-    // Análisis mejorado de productos con predicción individual
+    // Top productos con crecimiento
     const productTrends =
-      productsData?.slice(0, 8).map((product) => {
+      productsData?.slice(0, 5).map((product) => {
         const productOrders = ordersData.filter((order) =>
           order.Productos.toLowerCase().includes(product.Producto.toLowerCase()),
         )
 
-        if (productOrders.length < 3) {
-          return {
-            product: product.Producto,
-            currentDemand: product["Total Pedidos"],
-            trend: 0,
-            predictedGrowth: "Datos insuficientes",
-            recommendation: "Recopilar más datos",
-            weeklyPrediction: 0,
-            confidence: "Baja",
-          }
-        }
-
-        // Análisis temporal más sofisticado
-        const sortedOrders = productOrders.sort((a, b) => new Date(a.Fecha).getTime() - new Date(b.Fecha).getTime())
-        const recentOrders = sortedOrders.slice(-Math.ceil(sortedOrders.length / 3))
-        const oldOrders = sortedOrders.slice(0, Math.ceil(sortedOrders.length / 3))
+        // Calcular tendencia (últimos vs primeros pedidos)
+        const recentOrders = productOrders.slice(-Math.ceil(productOrders.length / 3))
+        const oldOrders = productOrders.slice(0, Math.ceil(productOrders.length / 3))
 
         const recentAvg =
           recentOrders.length > 0
@@ -419,153 +299,17 @@ export default function WhatsAppAnalyzer() {
 
         const trend = oldAvg > 0 ? ((recentAvg - oldAvg) / oldAvg) * 100 : 0
 
-        // Predicción semanal
-        const avgWeeklyDemand =
-          productOrders.reduce((sum, o) => sum + (o["Total Piezas"] || 0), 0) / Math.max(1, productOrders.length / 7) // Aproximar semanas
-
-        let weeklyPrediction = avgWeeklyDemand
-        if (trend > 15) weeklyPrediction *= 1.2
-        else if (trend > 5) weeklyPrediction *= 1.1
-        else if (trend < -15) weeklyPrediction *= 0.8
-        else if (trend < -5) weeklyPrediction *= 0.9
-
         return {
           product: product.Producto,
           currentDemand: product["Total Pedidos"],
           trend: Math.round(trend),
-          predictedGrowth:
-            trend > 15
-              ? "Crecimiento fuerte"
-              : trend > 5
-                ? "Crecimiento moderado"
-                : trend < -15
-                  ? "Declive fuerte"
-                  : trend < -5
-                    ? "Declive moderado"
-                    : "Estable",
+          predictedGrowth: trend > 0 ? "Creciente" : trend < -10 ? "Declinante" : "Estable",
           recommendation:
-            trend > 15
-              ? "Aumentar producción 20%"
-              : trend > 5
-                ? "Aumentar producción 10%"
-                : trend < -15
-                  ? "Reducir producción 20%"
-                  : trend < -5
-                    ? "Reducir producción 10%"
-                    : "Mantener nivel actual",
-          weeklyPrediction: Math.round(weeklyPrediction),
-          confidence: productOrders.length > 10 ? "Alta" : productOrders.length > 5 ? "Media" : "Baja",
+            trend > 15 ? "Aumentar producción" : trend < -15 ? "Reducir producción" : "Mantener nivel actual",
         }
       }) || []
 
     return { weeklyTrends, productTrends }
-  }
-
-  const calculateCustomerLifetimeValue = (clientsData: any[]) => {
-    return clientsData
-      .map((client) => {
-        const totalSpent = client["Total Gastado"] || 0
-        const totalOrders = client["Total Pedidos"] || 0
-        const frequency = client["Frecuencia Semanal"] || 0
-        const avgOrderValue = client["Valor Promedio Pedido"] || 0
-        const satisfaction = client["Puntuación Satisfacción"] || 0
-        const difficulty = client["Puntuación Dificultad"] || 0
-        const paymentIssues = client["Problemas Pago"] || 0
-        const lastOrderDate = new Date(client["Último Pedido"])
-        const daysSinceLastOrder = Math.floor((new Date().getTime() - lastOrderDate.getTime()) / (1000 * 60 * 60 * 24))
-
-        // Calcular probabilidad de retención (0-1)
-        let retentionProbability = 0.5 // Base 50%
-
-        // Factores positivos
-        if (satisfaction > 0) retentionProbability += 0.2
-        if (frequency > 2) retentionProbability += 0.15
-        if (totalOrders > 5) retentionProbability += 0.1
-        if (avgOrderValue > 15000) retentionProbability += 0.1
-
-        // Factores negativos
-        if (difficulty > 4) retentionProbability -= 0.2
-        if (paymentIssues > 0) retentionProbability -= 0.15
-        if (daysSinceLastOrder > 30) retentionProbability -= 0.2
-        if (satisfaction < 0) retentionProbability -= 0.25
-
-        // Limitar entre 0.05 y 0.95
-        retentionProbability = Math.max(0.05, Math.min(0.95, retentionProbability))
-
-        // Calcular duración esperada de la relación (en semanas)
-        const expectedLifetimeWeeks =
-          frequency > 0 ? (52 * retentionProbability) / (1 - retentionProbability + 0.01) : 12
-
-        // CLV = Valor promedio por pedido × Frecuencia × Duración esperada × Probabilidad de retención
-        const predictedCLV = avgOrderValue * frequency * expectedLifetimeWeeks * retentionProbability
-
-        // Costo estimado de recuperación (basado en dificultad y tiempo sin pedidos)
-        let recoveryEffort = 1 // Esfuerzo base
-        if (daysSinceLastOrder > 60) recoveryEffort += 2
-        if (difficulty > 4) recoveryEffort += 1
-        if (paymentIssues > 0) recoveryEffort += 1
-        if (satisfaction < 0) recoveryEffort += 2
-
-        const estimatedRecoveryCost = recoveryEffort * 2000 // $2000 por unidad de esfuerzo
-
-        // ROI de recuperación
-        const recoveryROI = predictedCLV > 0 ? (predictedCLV - estimatedRecoveryCost) / estimatedRecoveryCost : -1
-
-        // Determinar si vale la pena recuperar
-        let worthRecovering = "No"
-        let priority = "Baja"
-        let strategy = "No recomendado"
-
-        if (recoveryROI > 3) {
-          // ROI > 300%
-          worthRecovering = "Definitivamente"
-          priority = "Alta"
-          strategy = "Contacto personal + oferta especial"
-        } else if (recoveryROI > 1) {
-          // ROI > 100%
-          worthRecovering = "Sí"
-          priority = "Media"
-          strategy = "Llamada telefónica + descuento"
-        } else if (recoveryROI > 0.5) {
-          // ROI > 50%
-          worthRecovering = "Tal vez"
-          priority = "Baja"
-          strategy = "WhatsApp con promoción"
-        } else {
-          strategy = "Dejar ir - enfocar recursos en otros clientes"
-        }
-
-        // Factores de riesgo específicos
-        const riskFactors = []
-        if (daysSinceLastOrder > 60) riskFactors.push("Mucho tiempo sin pedidos")
-        if (difficulty > 4) riskFactors.push("Cliente difícil de manejar")
-        if (paymentIssues > 0) riskFactors.push("Historial de problemas de pago")
-        if (satisfaction < 0) riskFactors.push("Baja satisfacción")
-        if (frequency < 1) riskFactors.push("Baja frecuencia histórica")
-
-        return {
-          client: client["Nombre Cliente"],
-          currentValue: totalSpent,
-          predictedCLV: Math.round(predictedCLV),
-          retentionProbability: Math.round(retentionProbability * 100),
-          expectedLifetimeWeeks: Math.round(expectedLifetimeWeeks),
-          recoveryROI: Math.round(recoveryROI * 100),
-          estimatedRecoveryCost,
-          worthRecovering,
-          priority,
-          strategy,
-          riskFactors,
-          daysSinceLastOrder,
-          quickWins: [
-            avgOrderValue > 10000 ? "Cliente de valor medio-alto" : null,
-            frequency > 1 ? "Tenía buena frecuencia" : null,
-            satisfaction >= 0 ? "Sin problemas de satisfacción" : null,
-            paymentIssues === 0 ? "Sin problemas de pago" : null,
-          ].filter(Boolean),
-        }
-      })
-      .filter((client) => client.daysSinceLastOrder > 14) // Solo clientes que no han pedido en 2+ semanas
-      .sort((a, b) => b.recoveryROI - a.recoveryROI) // Ordenar por ROI descendente
   }
 
   const analyzeChurnRisk = (clientsData: any[]) => {
@@ -1901,80 +1645,6 @@ export default function WhatsAppAnalyzer() {
                             },
                           )}
                         </div>
-                      </CardContent>
-                    </Card>
-                    {/* Análisis de Recuperación de Clientes */}
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                          💰 Análisis de Recuperación de Clientes Inactivos
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        {predictiveAnalysis.recoveryAnalysis.length === 0 ? (
-                          <p className="text-center text-muted-foreground py-4">
-                            ¡Felicidades! No hay clientes inactivos con potencial de recuperación.
-                          </p>
-                        ) : (
-                          <div className="space-y-4">
-                            {predictiveAnalysis.recoveryAnalysis.slice(0, 10).map((client: any, idx: number) => (
-                              <div key={idx} className="p-4 border rounded-lg">
-                                <div className="flex justify-between items-start mb-3">
-                                  <h4 className="font-medium">{client.client}</h4>
-                                  <div className="text-right">
-                                    <Badge
-                                      variant={
-                                        client.priority === "Alta"
-                                          ? "default"
-                                          : client.priority === "Media"
-                                            ? "secondary"
-                                            : "outline"
-                                      }
-                                    >
-                                      {client.priority} Prioridad
-                                    </Badge>
-                                    <p className="text-sm text-green-600 mt-1">ROI: +{client.recoveryROI}%</p>
-                                  </div>
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-3 text-sm">
-                                  <div>
-                                    <p className="text-muted-foreground">Valor actual:</p>
-                                    <p className="font-medium">${client.currentValue.toLocaleString()}</p>
-                                  </div>
-                                  <div>
-                                    <p className="text-muted-foreground">CLV proyectado:</p>
-                                    <p className="font-medium text-green-600">
-                                      +${client.predictedCLV.toLocaleString()}
-                                    </p>
-                                  </div>
-                                  <div>
-                                    <p className="text-muted-foreground">Costo recuperación:</p>
-                                    <p className="font-medium text-red-600">
-                                      ${client.estimatedRecoveryCost.toLocaleString()}
-                                    </p>
-                                  </div>
-                                </div>
-
-                                <div>
-                                  <p className="text-sm text-muted-foreground mb-1">Estrategia recomendada:</p>
-                                  <p className="text-sm text-blue-600">{client.strategy}</p>
-                                </div>
-
-                                {client.riskFactors.length > 0 && (
-                                  <div className="mt-2">
-                                    <p className="text-sm text-muted-foreground">Factores de riesgo:</p>
-                                    <ul className="text-sm list-disc list-inside">
-                                      {client.riskFactors.map((factor: string, fidx: number) => (
-                                        <li key={fidx}>{factor}</li>
-                                      ))}
-                                    </ul>
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
                       </CardContent>
                     </Card>
                   </div>

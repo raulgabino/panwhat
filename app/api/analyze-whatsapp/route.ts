@@ -274,24 +274,57 @@ function parseWhatsAppConversations(text: string): Message[] {
   const messages: Message[] = []
   const lines = text.split("\n")
 
-  // Regex para formato: [H:MM AM/PM, M/D/YYYY] Nombre: Mensaje
-  const whatsappRegex = /^\[(\d{1,2}:\d{2}\s(?:AM|PM)),\s(\d{1,2}\/\d{1,2}\/\d{4})\]\s([^:]+):\s*(.*)$/
+  // Regex más flexible para diferentes formatos de fecha y hora
+  // Soporta: [H:MM AM/PM, M/D/YYYY], [HH:MM, DD/MM/YYYY], [H:MM AM/PM, D/M/YYYY], etc.
+  const whatsappRegex = /^\[(\d{1,2}:\d{2}(?:\s(?:AM|PM))?),\s(\d{1,2}\/\d{1,2}\/\d{2,4})\]\s([^:]+):\s*(.*)$/
 
   for (const line of lines) {
     const match = line.match(whatsappRegex)
     if (match) {
       const [, time, date, sender, content] = match
 
-      // Parse date and time
-      const [month, day, year] = date.split("/").map(Number)
-      const [hourMin, period] = time.split(" ")
-      const [hour, minute] = hourMin.split(":").map(Number)
+      // Parse date más flexible
+      const [datePart1, datePart2, year] = date.split("/").map(Number)
+      let month: number, day: number, fullYear: number
 
-      let adjustedHour = hour
-      if (period === "PM" && hour !== 12) adjustedHour += 12
-      if (period === "AM" && hour === 12) adjustedHour = 0
+      // Determinar si es formato MM/DD o DD/MM basado en valores
+      if (datePart1 > 12) {
+        // Debe ser DD/MM
+        day = datePart1
+        month = datePart2
+      } else if (datePart2 > 12) {
+        // Debe ser MM/DD
+        month = datePart1
+        day = datePart2
+      } else {
+        // Ambiguo, asumir MM/DD (formato US común en WhatsApp)
+        month = datePart1
+        day = datePart2
+      }
 
-      const timestamp = new Date(year, month - 1, day, adjustedHour, minute)
+      // Manejar años de 2 dígitos
+      fullYear = year < 100 ? (year > 50 ? 1900 + year : 2000 + year) : year
+
+      // Parse time más flexible (12h y 24h)
+      let adjustedHour: number, minute: number
+
+      if (time.includes("AM") || time.includes("PM")) {
+        // Formato 12 horas
+        const [hourMin, period] = time.split(" ")
+        const [hour, min] = hourMin.split(":").map(Number)
+        minute = min
+
+        adjustedHour = hour
+        if (period === "PM" && hour !== 12) adjustedHour += 12
+        if (period === "AM" && hour === 12) adjustedHour = 0
+      } else {
+        // Formato 24 horas
+        const [hour, min] = time.split(":").map(Number)
+        adjustedHour = hour
+        minute = min
+      }
+
+      const timestamp = new Date(fullYear, month - 1, day, adjustedHour, minute)
 
       // Determine if sender is client (not the bakery)
       const isClient = !sender.toLowerCase().includes("panaderia quilantan")
@@ -315,330 +348,322 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
   const dailyTrends = new Array(7).fill(0)
   const monthlyTrends = new Array(12).fill(0)
   const ordersData: OrderData[] = []
-  const clientOrdersData = new Map<string, OrderData[]>()
-  const clientProductsData = new Map<string, Array<{ product: string; count: number; percentage: number }>>()
-
-  // Productos específicos de panadería con precios estimados
-  const productPatterns = {
-    "conchas blancas": { regex: /(\d+)\s*conchas?\s*blancas?/gi, estimatedPrice: 800 },
-    "panes largos": { regex: /(\d+)\s*panes?\s*largos?/gi, estimatedPrice: 1000 },
-    armadillos: { regex: /(\d+)\s*armadillos?/gi, estimatedPrice: 900 },
-    pastelitos: { regex: /(\d+)\s*pastelitos?/gi, estimatedPrice: 1200 },
-    donas: { regex: /(\d+)\s*donas?/gi, estimatedPrice: 1100 },
-    bisquete: { regex: /(\d+)\s*bisquete?/gi, estimatedPrice: 700 },
-    roles: { regex: /(\d+)\s*roles?/gi, estimatedPrice: 800 },
-    ojos: { regex: /(\d+)\s*ojos?/gi, estimatedPrice: 900 },
-    hojaldrado: { regex: /(\d+)\s*hojaldrado?/gi, estimatedPrice: 1000 },
-    tostados: { regex: /(\d+)\s*tostados?/gi, estimatedPrice: 1100 },
-    "pan blanco": { regex: /(\d+)\s*pan\s*blanco?/gi, estimatedPrice: 600 },
-    cambios: { regex: /(\d+)\s*cambios?/gi, estimatedPrice: 800 },
-    surtidas: { regex: /(\d+)\s*(?:piezas\s*)?surtidas?/gi, estimatedPrice: 850 },
-  }
-
-  // Patrones de precios en pesos chilenos
-  const priceRegex = /\$?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)/g
 
   let totalOrders = 0
   let totalRevenue = 0
 
-  // Group messages by client
-  const conversationsByClient = new Map<string, Message[]>()
+  // Estado para procesamiento cronológico
+  let lastClientSender: string | null = null
+  const lastBakeryMessageTime: Date | null = null
+  const conversationStates = new Map<
+    string,
+    {
+      lastBakeryMessage: Date | null
+      awaitingResponse: boolean
+      messages: Message[]
+    }
+  >()
 
-  messages.forEach((message) => {
+  // Procesar mensajes cronológicamente
+  for (let i = 0; i < messages.length; i++) {
+    const message = messages[i]
+
+    // Update temporal trends
+    hourlyTrends[message.timestamp.getHours()]++
+    dailyTrends[message.timestamp.getDay()]++
+    monthlyTrends[message.timestamp.getMonth()]++
+
     if (message.isClient) {
-      if (!conversationsByClient.has(message.sender)) {
-        conversationsByClient.set(message.sender, [])
-      }
-    }
+      // Mensaje de cliente
+      lastClientSender = message.sender
 
-    // Add all messages to client conversations for context
-    const clientName = message.isClient ? message.sender : findClientForBakeryMessage(messages, message)
-    if (clientName) {
-      if (!conversationsByClient.has(clientName)) {
-        conversationsByClient.set(clientName, [])
-      }
-      conversationsByClient.get(clientName)!.push(message)
-    }
-  })
-
-  // Analyze each client
-  const clientAnalysisPromises = Array.from(conversationsByClient.entries()).map(
-    async ([clientName, clientMessages]) => {
-      const analysis: ClientAnalysis = {
-        name: clientName,
-        totalOrders: 0,
-        totalPieces: 0,
-        avgPiecesPerOrder: 0,
-        messagesPerOrder: 0,
-        responseTimeHours: 0,
-        difficultyScore: 0,
-        lastOrderDate: new Date(0),
-        preferredProducts: [],
-        orderPatterns: [],
-        paymentIssues: 0,
-        noResponseDays: 0,
-        orderFrequency: 0,
-        totalSpent: 0,
-        avgOrderValue: 0,
-        satisfactionScore: 0,
-        complaints: 0,
-        compliments: 0,
+      // Inicializar cliente si no existe
+      if (!clients.has(message.sender)) {
+        clients.set(message.sender, {
+          name: message.sender,
+          totalOrders: 0,
+          totalPieces: 0,
+          avgPiecesPerOrder: 0,
+          messagesPerOrder: 0,
+          responseTimeHours: 0,
+          difficultyScore: 0,
+          lastOrderDate: new Date(0),
+          preferredProducts: [],
+          orderPatterns: [],
+          paymentIssues: 0,
+          noResponseDays: 0,
+          orderFrequency: 0,
+          totalSpent: 0,
+          avgOrderValue: 0,
+          satisfactionScore: 0,
+          complaints: 0,
+          compliments: 0,
+        })
       }
 
-      const clientProductCounts: ProductCount = {}
-      const clientOrders: OrderData[] = []
-      const orderDates: Date[] = []
-      let totalResponseTime = 0
-      let responseCount = 0
-      let totalMessages = 0
-      let clientRevenue = 0
+      // Inicializar estado de conversación si no existe
+      if (!conversationStates.has(message.sender)) {
+        conversationStates.set(message.sender, {
+          lastBakeryMessage: null,
+          awaitingResponse: false,
+          messages: [],
+        })
+      }
 
-      // Sort messages by timestamp
-      const sortedMessages = clientMessages.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+      const clientAnalysis = clients.get(message.sender)!
+      const conversationState = conversationStates.get(message.sender)!
 
-      for (let i = 0; i < sortedMessages.length; i++) {
-        const message = sortedMessages[i]
+      // Agregar mensaje al historial de la conversación
+      conversationState.messages.push(message)
 
-        // Update temporal trends
-        hourlyTrends[message.timestamp.getHours()]++
-        dailyTrends[message.timestamp.getDay()]++
-        monthlyTrends[message.timestamp.getMonth()]++
+      // Calcular tiempo de respuesta si la panadería estaba esperando respuesta
+      if (conversationState.awaitingResponse && conversationState.lastBakeryMessage) {
+        const responseTimeMs = message.timestamp.getTime() - conversationState.lastBakeryMessage.getTime()
+        const responseTimeHours = responseTimeMs / (1000 * 60 * 60)
 
-        if (message.isClient) {
-          totalMessages++
+        // Actualizar tiempo de respuesta promedio
+        const currentTotal = clientAnalysis.responseTimeHours * (clientAnalysis.totalOrders || 1)
+        clientAnalysis.responseTimeHours =
+          (currentTotal + responseTimeHours) / Math.max(1, clientAnalysis.totalOrders + 1)
 
-          // Detect satisfaction indicators
-          const positiveWords = ["gracias", "perfecto", "excelente", "bueno", "ok"]
-          const negativeWords = ["problema", "mal", "error", "queja", "reclamo", "demora", "tarde"]
+        conversationState.awaitingResponse = false
+      }
 
-          const messageContent = message.content.toLowerCase()
-          if (positiveWords.some((word) => messageContent.includes(word))) {
-            analysis.compliments++
-          }
-          if (negativeWords.some((word) => messageContent.includes(word))) {
-            analysis.complaints++
-          }
+      // Analizar contenido del mensaje
+      const messageContent = message.content.toLowerCase()
 
-          // Detect orders by looking for product patterns
-          let orderPieces = 0
-          let orderValue = 0
-          const detectedProducts: string[] = []
+      // Detect satisfaction indicators
+      const positiveWords = ["gracias", "perfecto", "excelente", "bueno", "ok", "bien"]
+      const negativeWords = ["problema", "mal", "error", "queja", "reclamo", "demora", "tarde"]
 
-          // Check for explicit piece count (e.g., "30 piezas")
-          const piecesMatch = message.content.match(/(\d+)\s*piezas?/i)
-          if (piecesMatch) {
-            orderPieces = Number.parseInt(piecesMatch[1])
-          }
+      if (positiveWords.some((word) => messageContent.includes(word))) {
+        clientAnalysis.compliments++
+      }
+      if (negativeWords.some((word) => messageContent.includes(word))) {
+        clientAnalysis.complaints++
+      }
 
-          // Detect specific products and calculate estimated value
-          Object.entries(productPatterns).forEach(([productName, pattern]) => {
-            const matches = [...message.content.matchAll(pattern.regex)]
-            matches.forEach((match) => {
-              const count = Number.parseInt(match[1])
-              if (!isNaN(count)) {
-                clientProductCounts[productName] = (clientProductCounts[productName] || 0) + count
-                products.set(productName, (products.get(productName) || 0) + count)
-                detectedProducts.push(`${count} ${productName}`)
-                if (!piecesMatch) orderPieces += count
-                orderValue += count * pattern.estimatedPrice
-              }
-            })
-          })
+      // Detect payment issues
+      if (
+        messageContent.includes("pago") ||
+        messageContent.includes("mañana lo pago") ||
+        messageContent.includes("no lo pague")
+      ) {
+        clientAnalysis.paymentIssues++
+      }
 
-          // Check for explicit prices mentioned
-          const prices = message.content.match(priceRegex)
-          if (prices) {
-            prices.forEach((priceStr) => {
-              const price = Number.parseFloat(priceStr.replace(/\$|\.|,/g, ""))
-              if (price > 1000) {
-                // Assuming minimum order of $1000 CLP
-                orderValue = Math.max(orderValue, price) // Use explicit price if higher than estimated
-              }
-            })
-          }
+      // Detect "no" responses
+      if (messageContent.trim() === "hoy no" || (messageContent.includes("no") && message.content.length < 20)) {
+        clientAnalysis.noResponseDays++
+      }
 
-          // If this looks like an order (has products or pieces)
-          if (orderPieces > 0 || detectedProducts.length > 0) {
-            analysis.totalOrders++
-            analysis.totalPieces += orderPieces
-            orderDates.push(message.timestamp)
-            totalOrders++
+      // Detect orders by looking for product patterns
+      let orderPieces = 0
+      let orderValue = 0
+      const detectedProducts: string[] = []
 
-            // Use estimated value if no explicit price found
-            if (orderValue === 0 && orderPieces > 0) {
-              orderValue = orderPieces * 850 // Average price per piece
+      // Check for explicit piece count
+      const piecesMatch = message.content.match(/(\d+)\s*piezas?/i)
+      if (piecesMatch) {
+        orderPieces = Number.parseInt(piecesMatch[1])
+      }
+
+      // Detect specific products
+      Object.entries(productPatterns).forEach(([productName, pattern]) => {
+        const matches = [...message.content.matchAll(pattern.regex)]
+        matches.forEach((match) => {
+          const countText = match[1]
+          const count = textToNumber(countText)
+
+          if (count > 0) {
+            // Actualizar contadores de productos del cliente
+            if (!clientAnalysis.preferredProducts.find((p) => p.product === productName)) {
+              clientAnalysis.preferredProducts.push({ product: productName, count: 0, percentage: 0 })
             }
+            const productIndex = clientAnalysis.preferredProducts.findIndex((p) => p.product === productName)
+            clientAnalysis.preferredProducts[productIndex].count += count
 
-            clientRevenue += orderValue
-            totalRevenue += orderValue
+            // Actualizar contadores globales
+            products.set(productName, (products.get(productName) || 0) + count)
 
-            if (message.timestamp > analysis.lastOrderDate) {
-              analysis.lastOrderDate = message.timestamp
-            }
-
-            // Calculate response time (time between bakery asking and client responding)
-            let responseTime = 0
-            if (i > 0) {
-              const prevMessage = sortedMessages[i - 1]
-              if (
-                !prevMessage.isClient &&
-                prevMessage.content.toLowerCase().includes("cuántas piezas") &&
-                message.timestamp.getTime() - prevMessage.timestamp.getTime() < 24 * 60 * 60 * 1000
-              ) {
-                const responseTimeMs = message.timestamp.getTime() - prevMessage.timestamp.getTime()
-                responseTime = responseTimeMs / (1000 * 60 * 60)
-                totalResponseTime += responseTime
-                responseCount++
-              }
-            }
-
-            // Create order record
-            const orderRecord: OrderData = {
-              date: message.timestamp.toLocaleDateString(),
-              client: clientName,
-              products: detectedProducts.join(", ") || message.content,
-              totalPieces: orderPieces,
-              orderType: orderPieces >= 25 ? "Grande" : orderPieces >= 15 ? "Mediano" : "Pequeño",
-              responseTime: Math.round(responseTime * 10) / 10,
-              estimatedValue: orderValue,
-              dayOfWeek: message.timestamp.toLocaleDateString("es-ES", { weekday: "long" }),
-              hour: message.timestamp.getHours(),
-            }
-
-            ordersData.push(orderRecord)
-            clientOrders.push(orderRecord)
+            detectedProducts.push(`${count} ${productName}`)
+            if (!piecesMatch) orderPieces += count
+            orderValue += count * pattern.estimatedPrice
           }
+        })
+      })
 
-          // Detect payment issues
-          if (
-            message.content.toLowerCase().includes("pago") ||
-            message.content.toLowerCase().includes("mañana lo pago") ||
-            message.content.toLowerCase().includes("no lo pague")
-          ) {
-            analysis.paymentIssues++
+      // Check for explicit prices
+      const prices = message.content.match(/\$?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)/g)
+      if (prices) {
+        prices.forEach((priceStr) => {
+          const price = Number.parseFloat(priceStr.replace(/\$|\.|,/g, ""))
+          if (price > 1000) {
+            orderValue = Math.max(orderValue, price)
           }
+        })
+      }
 
-          // Detect "no" responses
-          if (
-            message.content.toLowerCase().trim() === "hoy no" ||
-            (message.content.toLowerCase().includes("no") && message.content.length < 20)
-          ) {
-            analysis.noResponseDays++
-          }
+      // If this looks like an order
+      if (orderPieces > 0 || detectedProducts.length > 0) {
+        clientAnalysis.totalOrders++
+        clientAnalysis.totalPieces += orderPieces
+        totalOrders++
+
+        if (orderValue === 0 && orderPieces > 0) {
+          orderValue = orderPieces * 850 // Average price per piece
+        }
+
+        clientAnalysis.totalSpent += orderValue
+        totalRevenue += orderValue
+
+        if (message.timestamp > clientAnalysis.lastOrderDate) {
+          clientAnalysis.lastOrderDate = message.timestamp
+        }
+
+        // Create order record
+        const orderRecord: OrderData = {
+          date: message.timestamp.toLocaleDateString(),
+          client: message.sender,
+          products: detectedProducts.join(", ") || message.content,
+          totalPieces: orderPieces,
+          orderType: orderPieces >= 25 ? "Grande" : orderPieces >= 15 ? "Mediano" : "Pequeño",
+          responseTime:
+            conversationState.awaitingResponse && conversationState.lastBakeryMessage
+              ? Math.round(
+                  ((message.timestamp.getTime() - conversationState.lastBakeryMessage.getTime()) / (1000 * 60 * 60)) *
+                    10,
+                ) / 10
+              : 0,
+          estimatedValue: orderValue,
+          dayOfWeek: message.timestamp.toLocaleDateString("es-ES", { weekday: "long" }),
+          hour: message.timestamp.getHours(),
+        }
+
+        ordersData.push(orderRecord)
+      }
+    } else {
+      // Mensaje de la panadería
+      if (lastClientSender) {
+        // Atribuir mensaje de panadería al último cliente que habló
+        const conversationState = conversationStates.get(lastClientSender)
+        if (conversationState) {
+          conversationState.lastBakeryMessage = message.timestamp
+          conversationState.awaitingResponse = true
+          conversationState.messages.push(message)
         }
       }
+    }
+  }
 
-      // Calculate metrics
-      analysis.totalSpent = clientRevenue
-      analysis.avgOrderValue = analysis.totalOrders > 0 ? clientRevenue / analysis.totalOrders : 0
-      analysis.avgPiecesPerOrder = analysis.totalOrders > 0 ? analysis.totalPieces / analysis.totalOrders : 0
-      analysis.messagesPerOrder = analysis.totalOrders > 0 ? totalMessages / analysis.totalOrders : totalMessages
-      analysis.responseTimeHours = responseCount > 0 ? totalResponseTime / responseCount : 0
+  // Calcular métricas finales para cada cliente
+  const clientAnalysisPromises = Array.from(clients.entries()).map(async ([clientName, analysis]) => {
+    // Calculate final metrics
+    analysis.avgPiecesPerOrder = analysis.totalOrders > 0 ? analysis.totalPieces / analysis.totalOrders : 0
+    analysis.avgOrderValue = analysis.totalOrders > 0 ? analysis.totalSpent / analysis.totalOrders : 0
+    analysis.satisfactionScore = analysis.compliments - analysis.complaints
 
-      // Calculate satisfaction score
-      analysis.satisfactionScore = analysis.compliments - analysis.complaints
+    // Calculate order frequency
+    const conversationState = conversationStates.get(clientName)
+    if (conversationState && conversationState.messages.length > 0) {
+      const clientMessages = conversationState.messages.filter((m) => m.isClient)
+      analysis.messagesPerOrder =
+        analysis.totalOrders > 0 ? clientMessages.length / analysis.totalOrders : clientMessages.length
 
-      // Calculate order frequency (orders per week)
+      // Calculate frequency based on order dates
+      const orderDates = ordersData
+        .filter((order) => order.client === clientName)
+        .map((order) => new Date(order.date))
+        .sort((a, b) => a.getTime() - b.getTime())
+
       if (orderDates.length > 1) {
         const firstOrder = orderDates[0]
         const lastOrder = orderDates[orderDates.length - 1]
         const daysDiff = (lastOrder.getTime() - firstOrder.getTime()) / (1000 * 60 * 60 * 24)
         analysis.orderFrequency = daysDiff > 0 ? (analysis.totalOrders / daysDiff) * 7 : 0
       }
+    }
 
-      // Get preferred products with percentages
-      const totalProductCount = Object.values(clientProductCounts).reduce((sum, count) => sum + count, 0)
-      analysis.preferredProducts = Object.entries(clientProductCounts)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 5)
-        .map(([product, count]) => ({
-          product,
-          count,
-          percentage: totalProductCount > 0 ? Math.round((count / totalProductCount) * 100) : 0,
-        }))
+    // Calculate preferred products percentages
+    const totalProductCount = analysis.preferredProducts.reduce((sum, p) => sum + p.count, 0)
+    analysis.preferredProducts = analysis.preferredProducts
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5)
+      .map((product) => ({
+        ...product,
+        percentage: totalProductCount > 0 ? Math.round((product.count / totalProductCount) * 100) : 0,
+      }))
 
-      // Store client-specific data
-      clientOrdersData.set(clientName, clientOrders)
-      clientProductsData.set(clientName, analysis.preferredProducts)
+    // Calculate difficulty score and patterns
+    const patterns = []
+    if (analysis.avgPiecesPerOrder >= 25) patterns.push("Pedidos grandes")
+    if (analysis.orderFrequency > 4) patterns.push("Cliente frecuente")
+    if (analysis.responseTimeHours > 3) patterns.push("Respuesta lenta")
+    if (analysis.paymentIssues > 0) patterns.push("Problemas de pago")
+    if (analysis.noResponseDays > 3) patterns.push("Días sin pedido")
+    if (analysis.satisfactionScore > 2) patterns.push("Cliente satisfecho")
+    if (analysis.satisfactionScore < -1) patterns.push("Cliente insatisfecho")
+    if (analysis.avgOrderValue > 20000) patterns.push("Alto valor")
+    analysis.orderPatterns = patterns
 
-      // Detect order patterns
-      const patterns = []
-      if (analysis.avgPiecesPerOrder >= 25) patterns.push("Pedidos grandes")
-      if (analysis.orderFrequency > 4) patterns.push("Cliente frecuente")
-      if (analysis.responseTimeHours > 3) patterns.push("Respuesta lenta")
-      if (analysis.paymentIssues > 0) patterns.push("Problemas de pago")
-      if (analysis.noResponseDays > 3) patterns.push("Días sin pedido")
-      if (analysis.satisfactionScore > 2) patterns.push("Cliente satisfecho")
-      if (analysis.satisfactionScore < -1) patterns.push("Cliente insatisfecho")
-      if (analysis.avgOrderValue > 20000) patterns.push("Alto valor")
-      analysis.orderPatterns = patterns
+    analysis.difficultyScore =
+      (analysis.messagesPerOrder > 2 ? 1 : 0) +
+      (analysis.responseTimeHours > 4 ? 2 : 0) +
+      analysis.paymentIssues * 3 +
+      (analysis.noResponseDays > 3 ? 2 : 0) +
+      (analysis.orderFrequency < 1 ? 1 : 0) +
+      (analysis.complaints > analysis.compliments ? 2 : 0)
 
-      // Calculate difficulty score (updated with new factors)
-      analysis.difficultyScore =
-        (analysis.messagesPerOrder > 2 ? 1 : 0) +
-        (analysis.responseTimeHours > 4 ? 2 : 0) +
-        analysis.paymentIssues * 3 +
-        (analysis.noResponseDays > 3 ? 2 : 0) +
-        (analysis.orderFrequency < 1 ? 1 : 0) +
-        (analysis.complaints > analysis.compliments ? 2 : 0)
+    // Analyze with GPT if available
+    let gptAnalysis: GPTAnalysis | null = null
+    if (process.env.OPENAI_API_KEY && analysis.totalOrders > 0) {
+      try {
+        const conversationState = conversationStates.get(clientName)
+        const clientMessageTexts = conversationState?.messages.filter((m) => m.isClient).map((m) => m.content) || []
 
-      // Analyze with GPT if API key is available
-      let gptAnalysis: GPTAnalysis | null = null
-      if (process.env.OPENAI_API_KEY && analysis.totalOrders > 0) {
-        try {
-          const clientMessageTexts = sortedMessages.filter((m) => m.isClient).map((m) => m.content)
-
-          gptAnalysis = await analyzeWithGPT(analysis, clientMessageTexts, clientOrders)
-        } catch (error) {
-          console.error(`Error analyzing client ${clientName} with GPT:`, error)
-          gptAnalysis = createFallbackAnalysis(analysis)
-        }
-      } else {
+        const clientOrders = ordersData.filter((order) => order.client === clientName)
+        gptAnalysis = await analyzeWithGPT(analysis, clientMessageTexts, clientOrders)
+      } catch (error) {
+        console.error(`Error analyzing client ${clientName} with GPT:`, error)
         gptAnalysis = createFallbackAnalysis(analysis)
       }
+    } else {
+      gptAnalysis = createFallbackAnalysis(analysis)
+    }
 
-      return { analysis, gptAnalysis }
-    },
-  )
+    return { analysis, gptAnalysis }
+  })
 
-  // Wait for all client analyses to complete
+  // Wait for all analyses to complete
   const clientResults = await Promise.all(clientAnalysisPromises)
 
-  // Process results
-  clientResults.forEach(({ analysis, gptAnalysis }) => {
-    clients.set(analysis.name, analysis)
-  })
-
-  const clientsData = Array.from(clients.values()).map((client, index) => {
-    const gptAnalysis = clientResults[index]?.gptAnalysis
-
-    return {
-      "Nombre Cliente": client.name,
-      "Total Pedidos": client.totalOrders,
-      "Total Piezas": client.totalPieces,
-      "Total Gastado": client.totalSpent,
-      "Valor Promedio Pedido": Math.round(client.avgOrderValue),
-      "Promedio Piezas/Pedido": Math.round(client.avgPiecesPerOrder * 10) / 10,
-      "Mensajes por Pedido": Math.round(client.messagesPerOrder * 10) / 10,
-      "Tiempo Respuesta (hrs)": Math.round(client.responseTimeHours * 10) / 10,
-      "Puntuación Dificultad": client.difficultyScore,
-      "Último Pedido": client.lastOrderDate.toLocaleDateString(),
-      "Productos Preferidos": client.preferredProducts.map((p) => `${p.product} (${p.count})`).join(", "),
-      "Productos Detallados": client.preferredProducts,
-      Patrones: client.orderPatterns.join(", "),
-      "Problemas Pago": client.paymentIssues,
-      "Días Sin Pedido": client.noResponseDays,
-      "Frecuencia Semanal": Math.round(client.orderFrequency * 10) / 10,
-      "Puntuación Satisfacción": client.satisfactionScore,
-      "Nivel de Riesgo": gptAnalysis?.riskLevel || "low",
-      "Perfil de Comportamiento": gptAnalysis?.behaviorProfile || "Análisis en proceso",
-      "Valor para Negocio": gptAnalysis?.businessValue || "Evaluando",
-      "Análisis Satisfacción": gptAnalysis?.satisfactionAnalysis || "Pendiente",
-      "Insights GPT": gptAnalysis?.insights || [],
-      "Recomendaciones GPT": gptAnalysis?.recommendations || [],
-      Predicciones: gptAnalysis?.predictedActions || [],
-    }
-  })
+  // Process results and prepare final data structure
+  const clientsData = clientResults.map(({ analysis, gptAnalysis }) => ({
+    "Nombre Cliente": analysis.name,
+    "Total Pedidos": analysis.totalOrders,
+    "Total Piezas": analysis.totalPieces,
+    "Total Gastado": analysis.totalSpent,
+    "Valor Promedio Pedido": Math.round(analysis.avgOrderValue),
+    "Promedio Piezas/Pedido": Math.round(analysis.avgPiecesPerOrder * 10) / 10,
+    "Mensajes por Pedido": Math.round(analysis.messagesPerOrder * 10) / 10,
+    "Tiempo Respuesta (hrs)": Math.round(analysis.responseTimeHours * 10) / 10,
+    "Puntuación Dificultad": analysis.difficultyScore,
+    "Último Pedido": analysis.lastOrderDate.toLocaleDateString(),
+    "Productos Preferidos": analysis.preferredProducts.map((p) => `${p.product} (${p.count})`).join(", "),
+    "Productos Detallados": analysis.preferredProducts,
+    Patrones: analysis.orderPatterns.join(", "),
+    "Problemas Pago": analysis.paymentIssues,
+    "Días Sin Pedido": analysis.noResponseDays,
+    "Frecuencia Semanal": Math.round(analysis.orderFrequency * 10) / 10,
+    "Puntuación Satisfacción": analysis.satisfactionScore,
+    "Nivel de Riesgo": gptAnalysis?.riskLevel || "low",
+    "Perfil de Comportamiento": gptAnalysis?.behaviorProfile || "Análisis en proceso",
+    "Valor para Negocio": gptAnalysis?.businessValue || "Evaluando",
+    "Análisis Satisfacción": gptAnalysis?.satisfactionAnalysis || "Pendiente",
+    "Insights GPT": gptAnalysis?.insights || [],
+    "Recomendaciones GPT": gptAnalysis?.recommendations || [],
+    Predicciones: gptAnalysis?.predictedActions || [],
+  }))
 
   const productsData = Array.from(products.entries()).map(([product, count]) => ({
     Producto: product,
@@ -707,23 +732,82 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
   }
 }
 
-function findClientForBakeryMessage(messages: Message[], bakeryMessage: Message): string | null {
-  // Find the client this bakery message is responding to
-  const messageIndex = messages.findIndex((m) => m === bakeryMessage)
+const productPatterns = {
+  "conchas blancas": {
+    regex:
+      /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:conchas?|conchitas?)\s*(?:blancas?|blanquitas?)?\b/gi,
+    estimatedPrice: 800,
+  },
+  "panes largos": {
+    regex:
+      /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:panes?|panecitos?)\s*(?:largos?|larguitos?)?\b/gi,
+    estimatedPrice: 1000,
+  },
+  armadillos: {
+    regex: /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:armadillos?|armadillitos?)\b/gi,
+    estimatedPrice: 900,
+  },
+  pastelitos: {
+    regex: /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:pastelitos?|pasteles?)\b/gi,
+    estimatedPrice: 1200,
+  },
+  donas: {
+    regex: /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:donas?|donitas?)\b/gi,
+    estimatedPrice: 1100,
+  },
+  bisquete: {
+    regex: /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:bisquete?s?|bisquetitos?)\b/gi,
+    estimatedPrice: 700,
+  },
+  roles: {
+    regex: /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:roles?|rolitos?)\b/gi,
+    estimatedPrice: 800,
+  },
+  ojos: {
+    regex: /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:ojos?|ojitos?)\b/gi,
+    estimatedPrice: 900,
+  },
+  hojaldrado: {
+    regex:
+      /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:hojaldrados?|hojaldraditos?)\b/gi,
+    estimatedPrice: 1000,
+  },
+  tostados: {
+    regex: /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:tostados?|tostaditos?)\b/gi,
+    estimatedPrice: 1100,
+  },
+  "pan blanco": {
+    regex:
+      /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:pan|panes?)\s*(?:blanco?s?|blanquito?s?)\b/gi,
+    estimatedPrice: 600,
+  },
+  cambios: {
+    regex: /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:cambios?|cambiitos?)\b/gi,
+    estimatedPrice: 800,
+  },
+  surtidas: {
+    regex:
+      /\b(?:(\d+|uno?|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*(?:piezas?\s*)?(?:surtidas?|surtiditas?)\b/gi,
+    estimatedPrice: 850,
+  },
+}
 
-  // Look backwards for the most recent client message
-  for (let i = messageIndex - 1; i >= 0; i--) {
-    if (messages[i].isClient) {
-      return messages[i].sender
-    }
+// Función para convertir números en texto a números
+const textToNumber = (text: string): number => {
+  const numberMap: { [key: string]: number } = {
+    uno: 1,
+    una: 1,
+    dos: 2,
+    tres: 3,
+    cuatro: 4,
+    cinco: 5,
+    seis: 6,
+    siete: 7,
+    ocho: 8,
+    nueve: 9,
+    diez: 10,
   }
 
-  // Look forwards for the next client message
-  for (let i = messageIndex + 1; i < messages.length; i++) {
-    if (messages[i].isClient) {
-      return messages[i].sender
-    }
-  }
-
-  return null
+  const lowerText = text.toLowerCase()
+  return numberMap[lowerText] || Number.parseInt(text) || 0
 }

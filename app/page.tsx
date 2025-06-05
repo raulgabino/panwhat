@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { parseISO } from "date-fns"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -19,20 +19,20 @@ import {
   Trash2,
   ChevronLeft,
   ChevronRight,
+  Clock,
 } from "lucide-react"
 import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import { useRef } from "react"
 
 export default function WhatsAppAnalyzer() {
   const [conversations, setConversations] = useState("")
   const [allConversations, setAllConversations] = useState<string[]>([])
 
-  // Nuevos estados según las instrucciones
-  const [analysisId, setAnalysisId] = useState<string | null>(null)
-  const [analysisStatus, setAnalysisStatus] = useState<string>("idle") // 'idle', 'processing', 'completed', 'error'
-  const [summaryData, setSummaryData] = useState<any>(null) // Renombrado de analysisData
+  // Estados renombrados según las instrucciones
+  const [jobId, setJobId] = useState<string | null>(null)
+  const [jobStatus, setJobStatus] = useState<string>("idle") // 'idle', 'pending', 'processing', 'completed', 'failed'
+  const [summaryData, setSummaryData] = useState<any>(null)
 
   // Estados para clientes paginados
   const [clients, setClients] = useState<any[]>([])
@@ -56,13 +56,11 @@ export default function WhatsAppAnalyzer() {
   // Estados para otras secciones
   const [trends, setTrends] = useState<any[]>([])
   const [trendsLoading, setTrendsLoading] = useState(false)
+  const [predictiveAnalysis, setPredictiveAnalysis] = useState<any>(null)
 
   const [conversationHistory, setConversationHistory] = useState<Array<{ id: number; preview: string; date: string }>>(
     [],
   )
-
-  const [predictiveAnalysis, setPredictiveAnalysis] = useState<any>(null)
-  const [chartData, setChartData] = useState<any>(null)
 
   // Ref para polling
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
@@ -92,20 +90,27 @@ export default function WhatsAppAnalyzer() {
     }
   }, [conversationHistory])
 
-  // Función para hacer polling del estado del análisis
-  const startPolling = (analysisId: string) => {
+  // Función para hacer polling del estado del trabajo
+  const startPolling = (jobId: string) => {
     pollingIntervalRef.current = setInterval(async () => {
       try {
-        const response = await fetch(`/api/analysis/${analysisId}?part=status`)
+        const response = await fetch(`/api/jobs/status/${jobId}`)
         const data = await response.json()
 
         if (data.status === "completed") {
-          setAnalysisStatus("completed")
+          setJobStatus("completed")
           if (pollingIntervalRef.current) {
             clearInterval(pollingIntervalRef.current)
           }
           // Cargar datos del resumen
-          await fetchSummaryData(analysisId)
+          await fetchSummaryData(jobId)
+        } else if (data.status === "failed") {
+          setJobStatus("failed")
+          if (pollingIntervalRef.current) {
+            clearInterval(pollingIntervalRef.current)
+          }
+        } else {
+          setJobStatus(data.status)
         }
       } catch (error) {
         console.error("Error polling status:", error)
@@ -114,24 +119,24 @@ export default function WhatsAppAnalyzer() {
   }
 
   // Función para obtener datos del resumen
-  const fetchSummaryData = async (analysisId: string) => {
+  const fetchSummaryData = async (jobId: string) => {
     try {
-      const response = await fetch(`/api/analysis/${analysisId}?part=summary`)
+      const response = await fetch(`/api/jobs/results/${jobId}?part=summary`)
       const data = await response.json()
       setSummaryData(data)
     } catch (error) {
       console.error("Error fetching summary:", error)
-      setAnalysisStatus("error")
+      setJobStatus("failed")
     }
   }
 
   // Función para obtener clientes paginados
   const fetchClients = async (page: number) => {
-    if (!analysisId) return
+    if (!jobId) return
 
     setClientsLoading(true)
     try {
-      const response = await fetch(`/api/analysis/${analysisId}?part=clients&page=${page}&limit=20`)
+      const response = await fetch(`/api/jobs/results/${jobId}?part=clients&page=${page}&limit=20`)
       const data = await response.json()
 
       setClients(data.clients || [])
@@ -147,11 +152,11 @@ export default function WhatsAppAnalyzer() {
 
   // Función para obtener productos paginados
   const fetchProducts = async (page: number) => {
-    if (!analysisId) return
+    if (!jobId) return
 
     setProductsLoading(true)
     try {
-      const response = await fetch(`/api/analysis/${analysisId}?part=products&page=${page}&limit=20`)
+      const response = await fetch(`/api/jobs/results/${jobId}?part=products&page=${page}&limit=20`)
       const data = await response.json()
 
       setProducts(data.products || [])
@@ -166,11 +171,11 @@ export default function WhatsAppAnalyzer() {
 
   // Función para obtener pedidos paginados
   const fetchOrders = async (page: number) => {
-    if (!analysisId) return
+    if (!jobId) return
 
     setOrdersLoading(true)
     try {
-      const response = await fetch(`/api/analysis/${analysisId}?part=orders&page=${page}&limit=20`)
+      const response = await fetch(`/api/jobs/results/${jobId}?part=orders&page=${page}&limit=20`)
       const data = await response.json()
 
       setOrders(data.orders || [])
@@ -185,11 +190,11 @@ export default function WhatsAppAnalyzer() {
 
   // Función para obtener tendencias
   const fetchTrends = async () => {
-    if (!analysisId) return
+    if (!jobId) return
 
     setTrendsLoading(true)
     try {
-      const response = await fetch(`/api/analysis/${analysisId}?part=trends`)
+      const response = await fetch(`/api/jobs/results/${jobId}?part=trends`)
       const data = await response.json()
 
       setTrends(data.trends || [])
@@ -197,6 +202,20 @@ export default function WhatsAppAnalyzer() {
       console.error("Error fetching trends:", error)
     } finally {
       setTrendsLoading(false)
+    }
+  }
+
+  // Función para obtener análisis predictivo
+  const fetchPredictiveAnalysis = async () => {
+    if (!jobId) return
+
+    try {
+      const response = await fetch(`/api/jobs/results/${jobId}?part=predictive`)
+      const data = await response.json()
+
+      setPredictiveAnalysis(data.predictiveAnalysis)
+    } catch (error) {
+      console.error("Error fetching predictive analysis:", error)
     }
   }
 
@@ -230,19 +249,19 @@ export default function WhatsAppAnalyzer() {
     }
 
     // Limpiar estados previos
-    setAnalysisStatus("processing")
+    setJobStatus("pending")
     setSummaryData(null)
     setClients([])
     setProducts([])
     setOrders([])
     setTrends([])
     setPredictiveAnalysis(null)
-    setChartData(null)
 
     try {
       const combinedConversations = allConversations.join("\n")
 
-      const response = await fetch("/api/analyze-whatsapp", {
+      // Hacer POST a /api/jobs/start
+      const response = await fetch("/api/jobs/start", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -256,16 +275,16 @@ export default function WhatsAppAnalyzer() {
 
       const data = await response.json()
 
-      if (data.analysisId) {
-        setAnalysisId(data.analysisId)
-        startPolling(data.analysisId)
+      if (data.jobId) {
+        setJobId(data.jobId)
+        startPolling(data.jobId)
       } else {
-        setAnalysisStatus("error")
+        setJobStatus("failed")
         alert("Error al iniciar el análisis")
       }
     } catch (error) {
       console.error("Error starting analysis:", error)
-      setAnalysisStatus("error")
+      setJobStatus("failed")
       alert("Error al procesar las conversaciones")
     }
   }
@@ -280,10 +299,9 @@ export default function WhatsAppAnalyzer() {
       setOrders([])
       setTrends([])
       setPredictiveAnalysis(null)
-      setChartData(null)
       setConversations("")
-      setAnalysisId(null)
-      setAnalysisStatus("idle")
+      setJobId(null)
+      setJobStatus("idle")
 
       if (pollingIntervalRef.current) {
         clearInterval(pollingIntervalRef.current)
@@ -296,7 +314,7 @@ export default function WhatsAppAnalyzer() {
 
   // Función para manejar cambios de pestaña
   const handleTabChange = (value: string) => {
-    if (analysisStatus !== "completed" || !analysisId) return
+    if (jobStatus !== "completed" || !jobId) return
 
     switch (value) {
       case "clients":
@@ -317,6 +335,11 @@ export default function WhatsAppAnalyzer() {
       case "trends":
         if (trends.length === 0) {
           fetchTrends()
+        }
+        break
+      case "gpt-insights":
+        if (!predictiveAnalysis) {
+          fetchPredictiveAnalysis()
         }
         break
     }
@@ -372,27 +395,6 @@ export default function WhatsAppAnalyzer() {
     )
   }
 
-  const getSegmentBadge = (segment: string) => {
-    const variants = {
-      VIP: "default",
-      "En Riesgo": "destructive",
-      Regular: "secondary",
-      Nuevo: "outline",
-    } as const
-    return <Badge variant={variants[segment as keyof typeof variants] || "outline"}>{segment}</Badge>
-  }
-
-  const getChurnRiskBadge = (churnRisk: string) => {
-    const variants = {
-      Alto: "destructive",
-      Medio: "secondary",
-      Bajo: "default",
-    } as const
-    return <Badge variant={variants[churnRisk as keyof typeof variants] || "outline"}>{churnRisk}</Badge>
-  }
-
-  const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884D8", "#82CA9D", "#FFC658", "#FF7C7C"]
-
   // Función para formatear fechas
   const formatDate = (dateString: string) => {
     try {
@@ -407,15 +409,31 @@ export default function WhatsAppAnalyzer() {
     }
   }
 
-  // **Paso 4: Implementar Virtualización para la Tabla de Clientes**
+  // Virtualización para la tabla de clientes
   const parentRef = useRef<HTMLDivElement>(null)
 
   const virtualizer = useVirtualizer({
     count: clients.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 60, // Altura estimada de cada fila
+    estimateSize: () => 60,
     overscan: 5,
   })
+
+  // Función para obtener el mensaje de estado
+  const getStatusMessage = () => {
+    switch (jobStatus) {
+      case "pending":
+        return "Trabajo en cola, esperando procesamiento..."
+      case "processing":
+        return "Analizando conversaciones con IA..."
+      case "completed":
+        return "Análisis completado"
+      case "failed":
+        return "Error en el análisis"
+      default:
+        return ""
+    }
+  }
 
   return (
     <div className="container mx-auto p-6 max-w-7xl">
@@ -441,13 +459,13 @@ export default function WhatsAppAnalyzer() {
               value={conversations}
               onChange={(e) => setConversations(e.target.value)}
               className="min-h-[200px] font-mono text-sm"
-              disabled={analysisStatus === "processing"}
+              disabled={jobStatus === "pending" || jobStatus === "processing"}
             />
 
             <div className="flex gap-2">
               <Button
                 onClick={handleAddConversation}
-                disabled={!conversations.trim() || analysisStatus === "processing"}
+                disabled={!conversations.trim() || jobStatus === "pending" || jobStatus === "processing"}
                 className="flex items-center gap-2"
               >
                 <Plus className="h-4 w-4" />
@@ -456,17 +474,19 @@ export default function WhatsAppAnalyzer() {
 
               <Button
                 onClick={handleAnalyzeAll}
-                disabled={analysisStatus === "processing" || allConversations.length === 0}
+                disabled={jobStatus === "pending" || jobStatus === "processing" || allConversations.length === 0}
                 variant="default"
                 className="flex items-center gap-2"
               >
                 <BarChart3 className="h-4 w-4" />
-                {analysisStatus === "processing" ? "Analizando..." : `Analizar Todo (${allConversations.length})`}
+                {jobStatus === "pending" || jobStatus === "processing"
+                  ? "Analizando..."
+                  : `Analizar Todo (${allConversations.length})`}
               </Button>
 
               <Button
                 onClick={handleClearAll}
-                disabled={allConversations.length === 0 || analysisStatus === "processing"}
+                disabled={allConversations.length === 0 || jobStatus === "pending" || jobStatus === "processing"}
                 variant="destructive"
                 className="flex items-center gap-2"
               >
@@ -492,7 +512,7 @@ export default function WhatsAppAnalyzer() {
                         variant="ghost"
                         onClick={() => handleRemoveConversation(index)}
                         className="ml-2"
-                        disabled={analysisStatus === "processing"}
+                        disabled={jobStatus === "pending" || jobStatus === "processing"}
                       >
                         <Trash2 className="h-3 w-3" />
                       </Button>
@@ -504,29 +524,39 @@ export default function WhatsAppAnalyzer() {
           </CardContent>
         </Card>
 
-        {/* **Paso 5: Mejorar la Experiencia de Usuario (UX)** */}
         {/* Indicador de Progreso durante el procesamiento */}
-        {analysisStatus === "processing" && (
+        {(jobStatus === "pending" || jobStatus === "processing") && (
           <Card className="border-blue-200 bg-blue-50">
             <CardContent className="p-6 text-center">
               <div className="space-y-4">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-                <div>
-                  <h3 className="text-lg font-semibold text-blue-800">Analizando conversaciones con IA...</h3>
-                  <p className="text-blue-600 mt-2">
-                    Esto puede tomar varios minutos dependiendo del volumen de datos.
-                  </p>
-                  <p className="text-sm text-blue-500 mt-1">
-                    Puedes dejar esta pestaña abierta mientras el análisis se completa.
-                  </p>
+                <div className="flex items-center justify-center gap-3">
+                  {jobStatus === "pending" ? (
+                    <Clock className="h-8 w-8 text-blue-600" />
+                  ) : (
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                  )}
+                  <div className="text-left">
+                    <h3 className="text-lg font-semibold text-blue-800">{getStatusMessage()}</h3>
+                    <p className="text-blue-600 mt-1">
+                      {jobStatus === "pending"
+                        ? "Tu análisis está en la cola de procesamiento."
+                        : "Esto puede tomar varios minutos dependiendo del volumen de datos."}
+                    </p>
+                  </div>
                 </div>
+                {jobId && (
+                  <div className="text-xs text-blue-500 font-mono bg-blue-100 p-2 rounded">ID del trabajo: {jobId}</div>
+                )}
+                <p className="text-sm text-blue-500">
+                  Puedes dejar esta pestaña abierta mientras el análisis se completa.
+                </p>
               </div>
             </CardContent>
           </Card>
         )}
 
         {/* Error state */}
-        {analysisStatus === "error" && (
+        {jobStatus === "failed" && (
           <Card className="border-red-200 bg-red-50">
             <CardContent className="p-6 text-center">
               <div className="space-y-4">
@@ -543,7 +573,7 @@ export default function WhatsAppAnalyzer() {
         )}
 
         {/* Results Section */}
-        {analysisStatus === "completed" && summaryData && (
+        {jobStatus === "completed" && summaryData && (
           <Tabs defaultValue="overview" className="w-full" onValueChange={handleTabChange}>
             <TabsList className="grid w-full grid-cols-6">
               <TabsTrigger value="overview">Resumen General</TabsTrigger>
@@ -716,7 +746,6 @@ export default function WhatsAppAnalyzer() {
                                 <TableHead>Frecuencia</TableHead>
                                 <TableHead>Último Pedido</TableHead>
                                 <TableHead>Dificultad</TableHead>
-                                <TableHead>Segmento</TableHead>
                                 <TableHead>Riesgo</TableHead>
                               </TableRow>
                             </TableHeader>
@@ -748,8 +777,7 @@ export default function WhatsAppAnalyzer() {
                                       <TableCell>{client["Frecuencia Semanal"]} / semana</TableCell>
                                       <TableCell>{formatDate(client["Último Pedido"])}</TableCell>
                                       <TableCell>{getDifficultyBadge(client["Puntuación Dificultad"])}</TableCell>
-                                      <TableCell>{getSegmentBadge(client["Segmento"] || "Regular")}</TableCell>
-                                      <TableCell>{getChurnRiskBadge(client["Riesgo de Abandono"] || "Bajo")}</TableCell>
+                                      <TableCell>{getRiskBadge(client["Nivel de Riesgo"])}</TableCell>
                                     </TableRow>
                                   )
                                 })}
@@ -964,7 +992,7 @@ export default function WhatsAppAnalyzer() {
                           <TableBody>
                             {orders.map((order: any, index: number) => (
                               <TableRow key={index}>
-                                <TableCell>{order.Fecha}</TableCell>
+                                <TableCell>{formatDate(order.Fecha)}</TableCell>
                                 <TableCell className="font-medium">{order.Cliente}</TableCell>
                                 <TableCell>{order.Productos}</TableCell>
                                 <TableCell>{order["Total Piezas"]}</TableCell>

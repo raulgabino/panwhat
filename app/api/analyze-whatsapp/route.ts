@@ -34,8 +34,12 @@ interface ClientAnalysis {
   generalOrders: number
   specificPieces: number
   generalPieces: number
-  segment?: string // Nuevo campo para segmentación
-  churnRisk?: string // Nuevo campo para riesgo de abandono
+  totalCambios: number // Nueva métrica para cambios
+  totalPedidosGenerales: number // Nueva métrica
+  totalPedidosEspecificos: number // Nueva métrica
+  subDestinations: Array<{ destination: string; orders: number; pieces: number }> // Para destinos múltiples
+  segment?: string
+  churnRisk?: string
 }
 
 interface OrderData {
@@ -44,11 +48,13 @@ interface OrderData {
   products: string
   totalPieces: number
   orderType: string
-  orderCategory: "especifico" | "general"
+  orderCategory: "General (Surtido)" | "Específico (Complacencia)"
   responseTime: number
   estimatedValue: number
   dayOfWeek: string
   hour: number
+  destination?: string // Para pedidos con destinos específicos
+  cambios?: number // Para rastrear cambios en el pedido
 }
 
 interface GPTAnalysis {
@@ -76,6 +82,12 @@ interface ConversationContext {
   >
 }
 
+interface ConversationTag {
+  type: string
+  content: string
+  timestamp: Date
+}
+
 async function analyzeWithGPT(
   clientData: ClientAnalysis,
   messages: string[],
@@ -95,10 +107,14 @@ async function analyzeWithGPT(
       preferredProducts: clientData.preferredProducts.slice(0, 3),
       recentMessages: messages.slice(-5),
       orderTrends: orderHistory.slice(-3),
+      totalCambios: clientData.totalCambios,
+      pedidosGenerales: clientData.totalPedidosGenerales,
+      pedidosEspecificos: clientData.totalPedidosEspecificos,
+      subDestinations: clientData.subDestinations,
     }
 
     const prompt = `
-Analiza este cliente de panadería y proporciona insights accionables:
+Analiza este cliente de panadería y proporciona insights accionables considerando el nuevo contexto de negocio:
 
 CLIENTE: ${context.clientName}
 MÉTRICAS CLAVE:
@@ -107,9 +123,21 @@ MÉTRICAS CLAVE:
 - Problemas pago: ${context.paymentIssues} | Quejas: ${context.complaints} | Elogios: ${context.compliments}
 - Top productos: ${context.preferredProducts.map((p) => `${p.product}(${p.percentage}%)`).join(", ")}
 
+ANÁLISIS DE COMPORTAMIENTO DE PEDIDOS:
+- Pedidos Generales (Surtido): ${context.pedidosGenerales}
+- Pedidos Específicos (Complacencia): ${context.pedidosEspecificos}
+- Total de Cambios Solicitados: ${context.totalCambios}
+- Destinos Múltiples: ${context.subDestinations?.map((d) => `${d.destination}(${d.orders} pedidos)`).join(", ") || "Ninguno"}
+
 MENSAJES RECIENTES: ${context.recentMessages.join(" | ")}
 
-PEDIDOS RECIENTES: ${context.orderTrends.map((o) => `${o.date}:${o.products}(${o.totalPieces}pzs,$${o.estimatedValue})`).join(" | ")}
+PEDIDOS RECIENTES: ${context.orderTrends.map((o) => `${o.date}:${o.products}(${o.totalPieces}pzs,$${o.estimatedValue},${o.orderCategory})`).join(" | ")}
+
+CONTEXTO DE NEGOCIO:
+- Los pedidos "Generales" son surtido de productos variados (más común)
+- Los pedidos "Específicos" son productos particulares solicitados por el cliente
+- Los "cambios" indican modificaciones o devoluciones en pedidos
+- Múltiples destinos sugieren que el cliente redistribuye productos
 
 Responde en JSON:
 {
@@ -123,12 +151,12 @@ Responde en JSON:
   "satisfactionAnalysis": "análisis en 1 línea"
 }
 
-ENFOQUE:
-1. Riesgos específicos para la panadería
-2. Oportunidades de crecimiento
-3. Recomendaciones de productos
-4. Estrategias de retención
-5. Optimización de comunicación
+ENFOQUE ESPECÍFICO:
+1. ¿Qué significa que un cliente pida muchos cambios?
+2. ¿Qué implica que prefiera surtido vs productos específicos?
+3. ¿Cómo afectan los múltiples destinos al negocio?
+4. Estrategias para optimizar la relación según su patrón de pedidos
+5. Riesgos y oportunidades específicas del comportamiento observado
 `
 
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -143,7 +171,7 @@ ENFOQUE:
           {
             role: "system",
             content:
-              "Eres un consultor experto en análisis de clientes para panaderías. Proporciona análisis concisos, prácticos y accionables en español. Responde SOLO en formato JSON válido.",
+              "Eres un consultor experto en análisis de clientes para panaderías. Entiendes los patrones de pedidos, la diferencia entre surtido y productos específicos, y el significado de cambios en pedidos. Proporciona análisis concisos, prácticos y accionables en español. Responde SOLO en formato JSON válido.",
           },
           {
             role: "user",
@@ -212,33 +240,30 @@ function createFallbackAnalysis(clientData: ClientAnalysis): GPTAnalysis {
     recommendations.push("Mantener nivel de servicio actual")
   }
 
-  if (clientData.totalSpent > 100000) {
-    insights.push("Cliente de muy alto valor económico para el negocio")
-    recommendations.push("Ofrecer descuentos por volumen y productos premium")
-  } else if (clientData.totalSpent > 50000) {
-    insights.push("Cliente de valor medio-alto con potencial de crecimiento")
-    recommendations.push("Implementar programa de fidelización")
+  // Análisis específico de patrones de pedidos
+  if (clientData.totalCambios > 5) {
+    insights.push("Cliente con alta frecuencia de cambios - posible insatisfacción con surtido")
+    recommendations.push("Consultar preferencias específicas para reducir cambios")
   }
 
-  if (clientData.orderFrequency > 5) {
-    insights.push("Cliente muy frecuente, excelente para flujo de caja")
+  if (clientData.totalPedidosGenerales > clientData.totalPedidosEspecificos * 3) {
+    insights.push("Cliente prefiere surtido variado - confía en la selección de la panadería")
+    recommendations.push("Mantener calidad consistente en el surtido")
+  } else if (clientData.totalPedidosEspecificos > clientData.totalPedidosGenerales) {
+    insights.push("Cliente con preferencias específicas - sabe exactamente lo que quiere")
     recommendations.push("Asegurar disponibilidad de productos preferidos")
-  } else if (clientData.orderFrequency < 1) {
-    insights.push("Cliente esporádico, riesgo de pérdida")
-    recommendations.push("Implementar estrategia de reactivación")
   }
 
-  if (clientData.preferredProducts.length > 0) {
-    const topProduct = clientData.preferredProducts[0]
-    insights.push(`Preferencia clara por ${topProduct.product} (${topProduct.percentage}% de pedidos)`)
-    recommendations.push(`Asegurar stock de ${topProduct.product} para este cliente`)
+  if (clientData.subDestinations && clientData.subDestinations.length > 0) {
+    insights.push("Cliente redistribuye productos - posible revendedor o comprador grupal")
+    recommendations.push("Considerar descuentos por volumen y horarios de entrega optimizados")
   }
 
   return {
     insights,
     recommendations,
     riskLevel,
-    behaviorProfile: `Cliente ${riskLevel === "high" ? "complejo" : riskLevel === "medium" ? "moderado" : "estable"} con ${clientData.orderFrequency > 3 ? "alta" : "baja"} frecuencia de pedidos`,
+    behaviorProfile: `Cliente ${riskLevel === "high" ? "complejo" : riskLevel === "medium" ? "moderado" : "estable"} con ${clientData.totalPedidosGenerales > clientData.totalPedidosEspecificos ? "preferencia por surtido" : "pedidos específicos"}`,
     communicationStyle:
       clientData.responseTimeHours > 4 ? "Comunicación lenta pero consistente" : "Comunicación eficiente y directa",
     businessValue:
@@ -296,7 +321,6 @@ function parseWhatsAppConversations(text: string): Message[] {
   const lines = text.split("\n")
 
   // Regex mejorada para múltiples formatos de hora y fecha
-  // Soporta: [H:MM a.m./p.m./AM/PM, D/M/AAAA] o [HH:MM, DD/MM/YYYY] etc.
   const whatsappRegex =
     /^\[(\d{1,2}:\d{2}(?:\s*(?:[ap]\.?m\.?|AM|PM))?),\s*(\d{1,2}\/\d{1,2}\/\d{2,4})\]\s*([^:]+):\s*(.*)$/i
 
@@ -391,6 +415,7 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
   const dailyTrends = new Array(7).fill(0)
   const monthlyTrends = new Array(12).fill(0)
   const ordersData: OrderData[] = []
+  const conversationTags: ConversationTag[] = []
 
   let totalOrders = 0
   let totalRevenue = 0
@@ -398,6 +423,7 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
   let totalGeneralOrders = 0
   let totalSpecificPieces = 0
   let totalGeneralPieces = 0
+  let totalCambios = 0
 
   // Contexto de conversación para procesamiento cronológico
   const context: ConversationContext = {
@@ -406,7 +432,7 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     clientStates: new Map(),
   }
 
-  // Productos específicos de panadería con regex mejoradas (sin "cambios")
+  // Productos específicos de panadería (SIN "cambios")
   const productPatterns = {
     "conchas blancas": {
       regex: /\b(?:conchas?|conchitas?)\s*(?:blancas?|blanquitas?)?\b/gi,
@@ -458,9 +484,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     },
   }
 
-  // Palabras clave para pedidos generales
-  const generalOrderKeywords = /\b(?:piezas?|surtido|panes?)\b/gi
-
   // Función para convertir números en texto a números
   const textToNumber = (text: string): number => {
     const numberMap: { [key: string]: number } = {
@@ -480,6 +503,10 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
       trece: 13,
       catorce: 14,
       quince: 15,
+      dieciséis: 16,
+      diecisiete: 17,
+      dieciocho: 18,
+      diecinueve: 19,
       veinte: 20,
       treinta: 30,
       cuarenta: 40,
@@ -511,14 +538,164 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     return numbers
   }
 
-  // Función para determinar si un mensaje contiene un pedido específico
-  const containsSpecificProducts = (content: string): boolean => {
-    return Object.values(productPatterns).some((pattern) => pattern.regex.test(content))
+  // Función para identificar mensajes informativos que NO son pedidos
+  const isInformativeMessage = (content: string, isClient: boolean): boolean => {
+    const lowerContent = content.toLowerCase()
+
+    if (isClient) {
+      // Mensajes de cliente que NO son pedidos
+      const clientInformativePatterns = [
+        /^(hoy\s+no|no\s+hoy)$/i,
+        /^(gcs|gracias|grasias)$/i,
+        /^(ok|okay)$/i,
+        /^(bdis|buenos\s+días|buenas\s+tardes|buenas\s+noches)$/i,
+        /^(si|sí)$/i,
+        /^(no)$/i,
+        /^(listo|perfecto|excelente)$/i,
+      ]
+
+      return clientInformativePatterns.some((pattern) => pattern.test(content))
+    } else {
+      // Mensajes de la panadería que son informativos
+      const bakeryInformativePatterns = [
+        /el\s+día\s+de\s+hoy\s+no\s+estaremos\s+contando\s+con/i,
+        /ya\s+va\s+a\s+salir\s+la\s+camioneta/i,
+        /buenos?\s+días?\s+panadería/i,
+        /cuántas?\s+piezas?\s+le\s+enviamos/i,
+      ]
+
+      return bakeryInformativePatterns.some((pattern) => pattern.test(content))
+    }
   }
 
-  // Función para determinar si un mensaje contiene un pedido general
-  const containsGeneralOrder = (content: string): boolean => {
-    return generalOrderKeywords.test(content) && !containsSpecificProducts(content)
+  // Función para extraer tags de conversación de mensajes informativos de la panadería
+  const extractConversationTags = (content: string, timestamp: Date): ConversationTag[] => {
+    const tags: ConversationTag[] = []
+    const lowerContent = content.toLowerCase()
+
+    if (lowerContent.includes("el día de hoy no estaremos contando con")) {
+      tags.push({
+        type: "AVISO_PRODUCCION",
+        content: content,
+        timestamp: timestamp,
+      })
+    }
+
+    if (lowerContent.includes("ya va a salir la camioneta")) {
+      tags.push({
+        type: "INFO_ENTREGA",
+        content: content,
+        timestamp: timestamp,
+      })
+    }
+
+    if (lowerContent.includes("cuántas piezas le enviamos")) {
+      tags.push({
+        type: "CONSULTA_PEDIDO",
+        content: content,
+        timestamp: timestamp,
+      })
+    }
+
+    return tags
+  }
+
+  // Función para detectar pedidos múltiples y destinos
+  const parseMultipleOrders = (content: string): Array<{ pieces: number; destination?: string; cambios?: number }> => {
+    const orders: Array<{ pieces: number; destination?: string; cambios?: number }> = []
+    const numbers = extractNumbers(content)
+
+    // Detectar cambios primero
+    const cambiosMatch = content.match(/(\d+|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+cambios?/gi)
+    let totalCambiosInMessage = 0
+
+    if (cambiosMatch) {
+      cambiosMatch.forEach((match) => {
+        const cambioNumber = extractNumbers(match)[0] || 0
+        totalCambiosInMessage += cambioNumber
+      })
+    }
+
+    // Detectar destinos específicos
+    const destinationPatterns = [
+      /para\s+la?\s+frutería\s+([^,\s]+)/gi,
+      /para\s+([^,\s]+\s+frutería)/gi,
+      /para\s+la?\s+tienda\s+([^,\s]+)/gi,
+      /para\s+([^,\s]+)/gi,
+    ]
+
+    let hasDestination = false
+    let destination = ""
+
+    for (const pattern of destinationPatterns) {
+      const match = content.match(pattern)
+      if (match) {
+        destination = match[0].replace(/para\s+la?\s*/gi, "").trim()
+        hasDestination = true
+        break
+      }
+    }
+
+    // Analizar números en el contexto
+    if (numbers.length === 0) {
+      return orders
+    }
+
+    if (numbers.length === 1) {
+      // Un solo número
+      orders.push({
+        pieces: numbers[0],
+        destination: hasDestination ? destination : undefined,
+        cambios: totalCambiosInMessage > 0 ? totalCambiosInMessage : undefined,
+      })
+    } else if (numbers.length === 2) {
+      // Dos números - posiblemente "15 y 12 para la frutería"
+      if (hasDestination) {
+        // Primer número para el cliente principal, segundo para el destino
+        orders.push({ pieces: numbers[0] })
+        orders.push({ pieces: numbers[1], destination: destination })
+      } else {
+        // Ambos números para el cliente principal
+        orders.push({ pieces: numbers[0] + numbers[1] })
+      }
+
+      if (totalCambiosInMessage > 0) {
+        orders[orders.length - 1].cambios = totalCambiosInMessage
+      }
+    } else {
+      // Múltiples números - sumar todos excepto los cambios
+      const totalPieces = numbers.reduce((sum, num) => sum + num, 0)
+      orders.push({
+        pieces: totalPieces,
+        destination: hasDestination ? destination : undefined,
+        cambios: totalCambiosInMessage > 0 ? totalCambiosInMessage : undefined,
+      })
+    }
+
+    return orders
+  }
+
+  // Función para determinar si un pedido es específico o general
+  const determineOrderCategory = (content: string): "General (Surtido)" | "Específico (Complacencia)" => {
+    // Si contiene nombres de productos específicos, es específico
+    const hasSpecificProducts = Object.values(productPatterns).some((pattern) => pattern.regex.test(content))
+
+    if (hasSpecificProducts) {
+      return "Específico (Complacencia)"
+    }
+
+    // Si solo contiene números o "piezas", es general
+    const isOnlyNumbers =
+      /^\s*(\d+|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|veinte|treinta|cuarenta|cincuenta)(\s+(y|piezas?))?\s*$/i.test(
+        content,
+      )
+
+    if (isOnlyNumbers) {
+      return "General (Surtido)"
+    }
+
+    // Por defecto, la mayoría son generales según las instrucciones
+    return "General (Surtido)"
   }
 
   // Procesar mensajes cronológicamente
@@ -529,6 +706,16 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     hourlyTrends[message.timestamp.getHours()]++
     dailyTrends[message.timestamp.getDay()]++
     monthlyTrends[message.timestamp.getMonth()]++
+
+    // Verificar si es un mensaje informativo
+    if (isInformativeMessage(message.content, message.isClient)) {
+      if (!message.isClient) {
+        // Extraer tags de mensajes informativos de la panadería
+        const tags = extractConversationTags(message.content, message.timestamp)
+        conversationTags.push(...tags)
+      }
+      continue // Saltar mensajes informativos
+    }
 
     if (message.isClient) {
       // Mensaje de cliente
@@ -559,6 +746,10 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
           generalOrders: 0,
           specificPieces: 0,
           generalPieces: 0,
+          totalCambios: 0,
+          totalPedidosGenerales: 0,
+          totalPedidosEspecificos: 0,
+          subDestinations: [],
         })
       }
 
@@ -615,46 +806,47 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
         clientAnalysis.paymentIssues++
       }
 
-      // Detectar respuestas negativas
-      if (
-        messageContent.trim() === "hoy no" ||
-        messageContent.trim() === "no" ||
-        (messageContent.includes("no") && message.content.length < 20)
-      ) {
-        clientAnalysis.noResponseDays++
-      }
+      // Analizar si el mensaje contiene pedidos múltiples
+      const orders = parseMultipleOrders(message.content)
 
-      // Analizar si el mensaje contiene un pedido
-      const isSpecificOrder = containsSpecificProducts(message.content)
-      const isGeneralOrder = containsGeneralOrder(message.content)
+      if (orders.length > 0) {
+        // Determinar categoría del pedido
+        const orderCategory = determineOrderCategory(message.content)
 
-      if (isSpecificOrder || isGeneralOrder) {
-        let orderPieces = 0
-        let orderValue = 0
-        const detectedProducts: string[] = []
-        let orderCategory: "especifico" | "general" = "general"
+        orders.forEach((order, orderIndex) => {
+          const orderPieces = order.pieces
+          let orderValue = 0
+          const detectedProducts: string[] = []
 
-        // Extraer números del mensaje
-        const numbersInMessage = extractNumbers(message.content)
+          // Procesar cambios si existen
+          if (order.cambios && order.cambios > 0) {
+            clientAnalysis.totalCambios += order.cambios
+            totalCambios += order.cambios
+          }
 
-        if (isSpecificOrder) {
-          orderCategory = "especifico"
+          // Procesar destinos múltiples
+          if (order.destination) {
+            const existingDestination = clientAnalysis.subDestinations.find(
+              (d) => d.destination.toLowerCase() === order.destination!.toLowerCase(),
+            )
+            if (existingDestination) {
+              existingDestination.orders++
+              existingDestination.pieces += orderPieces
+            } else {
+              clientAnalysis.subDestinations.push({
+                destination: order.destination,
+                orders: 1,
+                pieces: orderPieces,
+              })
+            }
+          }
 
-          // Detectar productos específicos
-          Object.entries(productPatterns).forEach(([productName, pattern]) => {
-            if (pattern.regex.test(message.content)) {
-              // Buscar números en el contexto del producto
-              let productCount = 0
+          if (orderCategory === "Específico (Complacencia)") {
+            // Detectar productos específicos
+            Object.entries(productPatterns).forEach(([productName, pattern]) => {
+              if (pattern.regex.test(message.content)) {
+                const productCount = Math.floor(orderPieces / Object.keys(productPatterns).length) || 1
 
-              // Si hay números en el mensaje, usar el primero como cantidad
-              if (numbersInMessage.length > 0) {
-                productCount = numbersInMessage[0]
-              } else {
-                // Si no hay números explícitos, asumir 1
-                productCount = 1
-              }
-
-              if (productCount > 0) {
                 // Actualizar contadores de productos del cliente
                 const existingProduct = clientAnalysis.preferredProducts.find((p) => p.product === productName)
                 if (existingProduct) {
@@ -667,88 +859,77 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
                 products.set(productName, (products.get(productName) || 0) + productCount)
 
                 detectedProducts.push(`${productCount} ${productName}`)
-                orderPieces += productCount
                 orderValue += productCount * pattern.estimatedPrice
               }
-            }
-          })
-        } else if (isGeneralOrder) {
-          orderCategory = "general"
+            })
 
-          // Para pedidos generales, buscar cantidad de piezas
-          const piecesMatch = message.content.match(/(\d+)\s*piezas?/i)
-          if (piecesMatch) {
-            orderPieces = Number.parseInt(piecesMatch[1])
-          } else if (numbersInMessage.length > 0) {
-            // Si hay números pero no se especifica "piezas", usar el primer número
-            orderPieces = numbersInMessage[0]
+            clientAnalysis.specificOrders++
+            clientAnalysis.specificPieces += orderPieces
+            clientAnalysis.totalPedidosEspecificos++
+            totalSpecificOrders++
+            totalSpecificPieces += orderPieces
           } else {
-            // Si no hay números, asumir un pedido pequeño
-            orderPieces = 5
+            // Pedido general (surtido)
+            detectedProducts.push(`${orderPieces} piezas surtidas`)
+            orderValue = orderPieces * 850 // Precio promedio por pieza
+
+            clientAnalysis.generalOrders++
+            clientAnalysis.generalPieces += orderPieces
+            clientAnalysis.totalPedidosGenerales++
+            totalGeneralOrders++
+            totalGeneralPieces += orderPieces
           }
 
-          detectedProducts.push(`${orderPieces} piezas surtidas`)
-          orderValue = orderPieces * 850 // Precio promedio por pieza
-        }
+          // Buscar precios explícitos mencionados
+          const priceRegex = /\$?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)/g
+          const prices = message.content.match(priceRegex)
+          if (prices) {
+            prices.forEach((priceStr) => {
+              const price = Number.parseFloat(priceStr.replace(/\$|\.|,/g, ""))
+              if (price > 1000) {
+                orderValue = Math.max(orderValue, price)
+              }
+            })
+          }
 
-        // Buscar precios explícitos mencionados
-        const priceRegex = /\$?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)/g
-        const prices = message.content.match(priceRegex)
-        if (prices) {
-          prices.forEach((priceStr) => {
-            const price = Number.parseFloat(priceStr.replace(/\$|\.|,/g, ""))
-            if (price > 1000) {
-              orderValue = Math.max(orderValue, price)
-            }
-          })
-        }
+          // Usar valor estimado si no hay precio explícito
+          if (orderValue === 0 && orderPieces > 0) {
+            orderValue = orderPieces * 850 // Precio promedio por pieza
+          }
 
-        // Registrar el pedido
-        clientAnalysis.totalOrders++
-        clientAnalysis.totalPieces += orderPieces
-        totalOrders++
+          // Registrar el pedido
+          clientAnalysis.totalOrders++
+          clientAnalysis.totalPieces += orderPieces
+          totalOrders++
 
-        // Actualizar contadores por categoría
-        if (orderCategory === "especifico") {
-          clientAnalysis.specificOrders++
-          clientAnalysis.specificPieces += orderPieces
-          totalSpecificOrders++
-          totalSpecificPieces += orderPieces
-        } else {
-          clientAnalysis.generalOrders++
-          clientAnalysis.generalPieces += orderPieces
-          totalGeneralOrders++
-          totalGeneralPieces += orderPieces
-        }
+          clientAnalysis.totalSpent += orderValue
+          totalRevenue += orderValue
 
-        // Usar valor estimado si no hay precio explícito
-        if (orderValue === 0 && orderPieces > 0) {
-          orderValue = orderPieces * 850 // Precio promedio por pieza
-        }
+          if (message.timestamp > clientAnalysis.lastOrderDate) {
+            clientAnalysis.lastOrderDate = message.timestamp
+          }
 
-        clientAnalysis.totalSpent += orderValue
-        totalRevenue += orderValue
+          // Crear registro de pedido
+          const orderRecord: OrderData = {
+            date: message.timestamp.toLocaleDateString(),
+            client: message.sender,
+            products: detectedProducts.join(", ") || `${orderPieces} piezas`,
+            totalPieces: orderPieces,
+            orderType: orderPieces >= 25 ? "Grande" : orderPieces >= 15 ? "Mediano" : "Pequeño",
+            orderCategory,
+            responseTime:
+              clientState.responseTimes.length > 0
+                ? clientState.responseTimes[clientState.responseTimes.length - 1]
+                : 0,
+            estimatedValue: orderValue,
+            dayOfWeek: message.timestamp.toLocaleDateString("es-ES", { weekday: "long" }),
+            hour: message.timestamp.getHours(),
+            destination: order.destination,
+            cambios: order.cambios,
+          }
 
-        if (message.timestamp > clientAnalysis.lastOrderDate) {
-          clientAnalysis.lastOrderDate = message.timestamp
-        }
-
-        // Crear registro de pedido
-        const orderRecord: OrderData = {
-          date: message.timestamp.toLocaleDateString(),
-          client: message.sender,
-          products: detectedProducts.join(", ") || message.content,
-          totalPieces: orderPieces,
-          orderType: orderPieces >= 25 ? "Grande" : orderPieces >= 15 ? "Mediano" : "Pequeño",
-          orderCategory,
-          responseTime:
-            clientState.responseTimes.length > 0 ? clientState.responseTimes[clientState.responseTimes.length - 1] : 0,
-          estimatedValue: orderValue,
-          dayOfWeek: message.timestamp.toLocaleDateString("es-ES", { weekday: "long" }),
-          hour: message.timestamp.getHours(),
-        }
-
-        ordersData.push(orderRecord)
+          ordersData.push(orderRecord)
+        })
       }
     } else {
       // Mensaje de la panadería
@@ -805,7 +986,7 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
         percentage: totalProductCount > 0 ? Math.round((product.count / totalProductCount) * 100) : 0,
       }))
 
-    // Detectar patrones de pedidos
+    // Detectar patrones de pedidos actualizados
     const patterns = []
     if (analysis.avgPiecesPerOrder >= 25) patterns.push("Pedidos grandes")
     if (analysis.orderFrequency > 4) patterns.push("Cliente frecuente")
@@ -815,28 +996,28 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     if (analysis.satisfactionScore > 2) patterns.push("Cliente satisfecho")
     if (analysis.satisfactionScore < -1) patterns.push("Cliente insatisfecho")
     if (analysis.avgOrderValue > 20000) patterns.push("Alto valor")
-    if (analysis.specificOrders > analysis.generalOrders) patterns.push("Prefiere productos específicos")
-    if (analysis.generalOrders > analysis.specificOrders) patterns.push("Prefiere pedidos generales")
+    if (analysis.totalPedidosEspecificos > analysis.totalPedidosGenerales)
+      patterns.push("Prefiere productos específicos")
+    if (analysis.totalPedidosGenerales > analysis.totalPedidosEspecificos) patterns.push("Prefiere surtido")
+    if (analysis.totalCambios > 5) patterns.push("Solicita muchos cambios")
+    if (analysis.subDestinations.length > 0) patterns.push("Múltiples destinos")
     analysis.orderPatterns = patterns
 
-    // Calcular puntuación de dificultad
+    // Calcular puntuación de dificultad actualizada
     analysis.difficultyScore =
       (analysis.messagesPerOrder > 2 ? 1 : 0) +
       (analysis.responseTimeHours > 4 ? 2 : 0) +
       analysis.paymentIssues * 3 +
       (analysis.noResponseDays > 3 ? 2 : 0) +
       (analysis.orderFrequency < 1 ? 1 : 0) +
-      (analysis.complaints > analysis.compliments ? 2 : 0)
+      (analysis.complaints > analysis.compliments ? 2 : 0) +
+      (analysis.totalCambios > 5 ? 1 : 0) // Penalizar muchos cambios
 
     // Calcular días desde el último pedido
     const today = new Date()
     const daysSinceLastOrder = Math.floor((today.getTime() - analysis.lastOrderDate.getTime()) / (1000 * 60 * 60 * 24))
 
     // Implementar segmentación de clientes
-    // 1. VIP: frecuenciaSemanal > 3 Y totalGastado > 50000
-    // 2. En Riesgo: diasDesdeUltimoPedido > 15 O puntuacionSatisfaccion < 0
-    // 3. Nuevo: totalPedidos < 3
-    // 4. Regular: Todos los demás
     if (analysis.orderFrequency > 3 && analysis.totalSpent > 50000) {
       analysis.segment = "VIP"
     } else if (daysSinceLastOrder > 15 || analysis.satisfactionScore < 0) {
@@ -850,13 +1031,11 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     // Calcular nivel de riesgo de abandono (churnRisk)
     let riskScore = 0
 
-    // Sumar puntos al riskScore según los criterios
     if (daysSinceLastOrder > 20) riskScore += 3
     if (analysis.difficultyScore > 4) riskScore += 2
     if (analysis.satisfactionScore < 0) riskScore += 2
     riskScore += analysis.paymentIssues * 3
 
-    // Asignar nivel de riesgo basado en el riskScore
     if (riskScore >= 5) {
       analysis.churnRisk = "Alto"
     } else if (riskScore >= 3) {
@@ -887,7 +1066,7 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
   // Esperar a que se completen todos los análisis
   const clientResults = await Promise.all(clientAnalysisPromises)
 
-  // Preparar datos finales manteniendo la estructura original
+  // Preparar datos finales con la nueva estructura
   const clientsData = clientResults.map(({ analysis, gptAnalysis }) => ({
     "Nombre Cliente": analysis.name,
     "Total Pedidos": analysis.totalOrders,
@@ -917,8 +1096,15 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     "Insights GPT": gptAnalysis?.insights || [],
     "Recomendaciones GPT": gptAnalysis?.recommendations || [],
     Predicciones: gptAnalysis?.predictedActions || [],
-    Segmento: analysis.segment, // Nuevo campo de segmentación
-    "Riesgo de Abandono": analysis.churnRisk, // Nuevo campo de riesgo de abandono
+    Segmento: analysis.segment,
+    "Riesgo de Abandono": analysis.churnRisk,
+    // Nuevos campos
+    "Total Pedidos Generales": analysis.totalPedidosGenerales,
+    "Total Pedidos Específicos": analysis.totalPedidosEspecificos,
+    "Total Cambios": analysis.totalCambios,
+    "Destinos Múltiples": analysis.subDestinations
+      .map((d) => `${d.destination} (${d.orders} pedidos, ${d.pieces} piezas)`)
+      .join(", "),
   }))
 
   const productsData = Array.from(products.entries()).map(([product, count]) => ({
@@ -969,9 +1155,11 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     "Valor Estimado": order.estimatedValue,
     "Día de la Semana": order.dayOfWeek,
     Hora: order.hour,
+    Destino: order.destination || "Principal",
+    Cambios: order.cambios || 0,
   }))
 
-  // Calcular estadísticas de segmentación
+  // Calcular estadísticas actualizadas
   const segmentStats = {
     VIP: clientsData.filter((client) => client["Segmento"] === "VIP").length,
     "En Riesgo": clientsData.filter((client) => client["Segmento"] === "En Riesgo").length,
@@ -979,7 +1167,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     Regular: clientsData.filter((client) => client["Segmento"] === "Regular").length,
   }
 
-  // Calcular estadísticas de riesgo de abandono
   const churnRiskStats = {
     Alto: clientsData.filter((client) => client["Riesgo de Abandono"] === "Alto").length,
     Medio: clientsData.filter((client) => client["Riesgo de Abandono"] === "Medio").length,
@@ -994,6 +1181,7 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     totalPieces: Array.from(clients.values()).reduce((sum, client) => sum + client.totalPieces, 0),
     totalSpecificPieces,
     totalGeneralPieces,
+    totalCambios,
     totalRevenue: Array.from(clients.values()).reduce((sum, client) => sum + client.totalSpent, 0),
     avgResponseTime:
       Math.round(
@@ -1003,6 +1191,7 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     productsData: productsData.sort((a, b) => b["Total Pedidos"] - a["Total Pedidos"]),
     trendsData,
     ordersData: ordersExportData,
+    conversationTags,
     isAccumulative,
     totalConversationsProcessed: totalConversations,
     segmentStats,

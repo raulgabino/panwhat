@@ -1,4 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
+import { writeFile } from "fs/promises"
+import { join } from "path"
 
 interface Message {
   timestamp: Date
@@ -38,7 +40,7 @@ interface ClientAnalysis {
   totalPedidosGenerales: number
   totalPedidosEspecificos: number
   subDestinations: Array<{ destination: string; orders: number; pieces: number }>
-  exclusions: string[] // Nuevo campo para exclusiones
+  exclusions: string[]
   segment?: string
   churnRisk?: string
 }
@@ -56,8 +58,8 @@ interface OrderData {
   hour: number
   destination?: string
   cambios?: number
-  packageFormat?: string // Para pedidos por paquete
-  detailedProducts?: Array<{ product: string; quantity: number }> // Para productos específicos en pedidos mixtos
+  packageFormat?: string
+  detailedProducts?: Array<{ product: string; quantity: number }>
 }
 
 interface GPTAnalysis {
@@ -69,7 +71,6 @@ interface GPTAnalysis {
   businessValue: string
   predictedActions: string[]
   satisfactionAnalysis: string
-  // Nuevos campos específicos
   customerProfile: string
   keyPreferences: string[]
   keyExclusions: string[]
@@ -114,14 +115,14 @@ async function analyzeWithGPT(
       compliments: clientData.compliments,
       orderFrequency: clientData.orderFrequency,
       preferredProducts: clientData.preferredProducts.slice(0, 5),
-      recentMessages: messages.slice(-10), // Más mensajes para mejor contexto
+      recentMessages: messages.slice(-10),
       orderTrends: orderHistory.slice(-5),
       totalCambios: clientData.totalCambios,
       pedidosGenerales: clientData.totalPedidosGenerales,
       pedidosEspecificos: clientData.totalPedidosEspecificos,
       subDestinations: clientData.subDestinations,
       exclusions: clientData.exclusions,
-      allMessages: messages, // Toda la conversación para análisis completo
+      allMessages: messages,
     }
 
     const prompt = `
@@ -217,7 +218,6 @@ ENFOQUE:
       const cleanResponse = gptResponse.replace(/```json|```/g, "").trim()
       const analysis = JSON.parse(cleanResponse)
 
-      // Validar que todos los campos requeridos estén presentes
       const requiredFields = [
         "insights",
         "recommendations",
@@ -271,7 +271,6 @@ function createFallbackAnalysis(clientData: ClientAnalysis): GPTAnalysis {
     recommendations.push("Mantener nivel de servicio actual")
   }
 
-  // Análisis específico de patrones
   if (clientData.totalCambios > 5) {
     insights.push("Cliente con alta frecuencia de cambios - posible insatisfacción")
     recommendations.push("Consultar preferencias específicas para reducir cambios")
@@ -332,23 +331,56 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Conversaciones inválidas" }, { status: 400 })
     }
 
+    // Generar ID único para el análisis
+    const analysisId = crypto.randomUUID()
+
+    // Responder inmediatamente con el ID
+    const response = NextResponse.json({ analysisId })
+
+    // Iniciar análisis en segundo plano (sin await)
+    processAnalysisInBackground(analysisId, conversations, isAccumulative, totalConversations)
+
+    return response
+  } catch (error) {
+    console.error("Error starting analysis:", error)
+    return NextResponse.json({ error: "Error interno del servidor" }, { status: 500 })
+  }
+}
+
+// Función que se ejecuta en segundo plano
+async function processAnalysisInBackground(
+  analysisId: string,
+  conversations: string,
+  isAccumulative: boolean,
+  totalConversations: number,
+) {
+  try {
     const messages = parseWhatsAppConversations(conversations)
 
     if (messages.length === 0) {
-      return NextResponse.json(
-        {
-          error: "No se pudieron reconocer mensajes válidos en el texto. Verifica el formato del chat.",
-        },
-        { status: 400 },
-      )
+      await saveAnalysisError(analysisId, "No se pudieron reconocer mensajes válidos en el texto")
+      return
     }
 
     const analysis = await analyzeConversations(messages, isAccumulative, totalConversations)
 
-    return NextResponse.json(analysis)
+    // Guardar resultado en archivo temporal
+    const filePath = join("/tmp", `${analysisId}.json`)
+    await writeFile(filePath, JSON.stringify(analysis, null, 2))
+
+    console.log(`Analysis ${analysisId} completed and saved`)
   } catch (error) {
-    console.error("Error analyzing conversations:", error)
-    return NextResponse.json({ error: "Error interno del servidor" }, { status: 500 })
+    console.error(`Error processing analysis ${analysisId}:`, error)
+    await saveAnalysisError(analysisId, "Error procesando el análisis")
+  }
+}
+
+async function saveAnalysisError(analysisId: string, errorMessage: string) {
+  try {
+    const filePath = join("/tmp", `${analysisId}.json`)
+    await writeFile(filePath, JSON.stringify({ error: errorMessage }))
+  } catch (writeError) {
+    console.error(`Error saving error for analysis ${analysisId}:`, writeError)
   }
 }
 
@@ -453,7 +485,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     clientStates: new Map(),
   }
 
-  // Productos ampliados con regex robustas
   const productPatterns = {
     "conchas blancas": {
       regex: /\b(?:conchas?|conchitas?)\s*(?:blancas?|blanquitas?)?\b/gi,
@@ -503,7 +534,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
       regex: /\b(?:piezas?\s*)?(?:surtidas?|surtiditas?|variadas?)\b/gi,
       estimatedPrice: 850,
     },
-    // Nuevos productos añadidos
     "bolillo de mantequilla": {
       regex: /\b(?:bolillos?\s*(?:de\s*)?mantequilla|bolillos?\s*mantequilla)\b/gi,
       estimatedPrice: 750,
@@ -598,7 +628,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     },
   }
 
-  // Función para convertir números en texto a números (ampliada)
   const textToNumber = (text: string): number => {
     const numberMap: { [key: string]: number } = {
       uno: 1,
@@ -640,17 +669,14 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     return numberMap[lowerText] || Number.parseInt(text) || 0
   }
 
-  // Función para extraer números de un texto (mejorada)
   const extractNumbers = (text: string): number[] => {
     const numbers: number[] = []
 
-    // Buscar números escritos en dígitos
     const digitMatches = text.match(/\b\d+\b/g)
     if (digitMatches) {
       numbers.push(...digitMatches.map(Number))
     }
 
-    // Buscar números escritos en palabras
     const words = text.toLowerCase().split(/\s+/)
     for (const word of words) {
       const num = textToNumber(word)
@@ -662,7 +688,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     return numbers
   }
 
-  // Función para identificar mensajes informativos
   const isInformativeMessage = (content: string, isClient: boolean): boolean => {
     const lowerContent = content.toLowerCase()
 
@@ -692,12 +717,10 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     }
   }
 
-  // Función para extraer exclusiones del cliente
   const extractExclusions = (content: string): string[] => {
     const exclusions: string[] = []
     const lowerContent = content.toLowerCase()
 
-    // Patrones para detectar exclusiones
     const exclusionPatterns = [
       /no\s+me\s+ponga\s+([^,.]+)/gi,
       /sin\s+([^,.]+)/gi,
@@ -718,11 +741,9 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     return exclusions
   }
 
-  // Función para detectar pedidos por paquete
   const parsePackageOrders = (content: string): Array<{ pieces: number; packageFormat: string }> => {
     const packageOrders: Array<{ pieces: number; packageFormat: string }> = []
 
-    // Patrones para pedidos por paquete: "1 de 50", "2 de 40 pf", etc.
     const packagePatterns = [
       /(\d+|uno|dos|tres|cuatro|cinco)\s+de\s+(\d+)(?:\s+pf)?/gi,
       /(\d+|uno|dos|tres|cuatro|cinco)\s+paquetes?\s+de\s+(\d+)/gi,
@@ -746,13 +767,11 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     return packageOrders
   }
 
-  // Función para detectar pedidos múltiples y destinos (mejorada)
   const parseMultipleOrders = (
     content: string,
   ): Array<{ pieces: number; destination?: string; cambios?: number; packageFormat?: string }> => {
     const orders: Array<{ pieces: number; destination?: string; cambios?: number; packageFormat?: string }> = []
 
-    // Primero verificar si es un pedido por paquete
     const packageOrders = parsePackageOrders(content)
     if (packageOrders.length > 0) {
       packageOrders.forEach((pkg) => {
@@ -766,7 +785,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
 
     const numbers = extractNumbers(content)
 
-    // Detectar cambios
     const cambiosMatch = content.match(/(\d+|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+cambios?/gi)
     let totalCambiosInMessage = 0
 
@@ -777,7 +795,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
       })
     }
 
-    // Detectar destinos específicos (mejorado)
     const destinationPatterns = [
       /para\s+la?\s+frutería\s+([^,\s.]+)/gi,
       /para\s+([^,\s.]+\s+frutería)/gi,
@@ -830,11 +847,9 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     return orders
   }
 
-  // Función para determinar categoría de pedido (mejorada)
   const determineOrderCategory = (content: string): "General (Surtido)" | "Específico (Complacencia)" | "Mixto" => {
     const hasSpecificProducts = Object.values(productPatterns).some((pattern) => pattern.regex.test(content))
 
-    // Detectar pedidos mixtos: "20 piezas, que incluya 5 conchas"
     const mixedPatterns = [
       /(\d+)\s+piezas?,?\s+(?:que\s+)?(?:incluya?|con|que\s+tenga)\s+(\d+)\s+([a-záéíóúñ\s]+)/gi,
       /(\d+)\s+(?:que\s+)?(?:incluya?|con|que\s+tenga)\s+(\d+)\s+([a-záéíóúñ\s]+)/gi,
@@ -862,7 +877,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     return "General (Surtido)"
   }
 
-  // Función para parsear pedidos mixtos
   const parseMixedOrder = (content: string, totalPieces: number): Array<{ product: string; quantity: number }> => {
     const detailedProducts: Array<{ product: string; quantity: number }> = []
 
@@ -879,7 +893,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
         const quantity = Number.parseInt(match[1]) || 0
         const productName = match[2].trim().toLowerCase()
 
-        // Verificar si coincide con algún producto conocido
         for (const [knownProduct, productData] of Object.entries(productPatterns)) {
           if (productData.regex.test(productName)) {
             detailedProducts.push({
@@ -893,7 +906,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
       }
     })
 
-    // Agregar surtido para las piezas restantes
     const remainingPieces = totalPieces - totalSpecificPieces
     if (remainingPieces > 0) {
       detailedProducts.push({
@@ -905,7 +917,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     return detailedProducts
   }
 
-  // Procesar mensajes cronológicamente
   for (let i = 0; i < messages.length; i++) {
     const message = messages[i]
 
@@ -952,7 +963,7 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
           totalPedidosGenerales: 0,
           totalPedidosEspecificos: 0,
           subDestinations: [],
-          exclusions: [], // Nuevo campo
+          exclusions: [],
         })
       }
 
@@ -970,7 +981,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
 
       clientState.totalMessages++
 
-      // Calcular tiempo de respuesta
       if (clientState.awaitingResponse && clientState.lastBakeryMessage) {
         const responseTimeMs = message.timestamp.getTime() - clientState.lastBakeryMessage.getTime()
         const responseTimeHours = responseTimeMs / (1000 * 60 * 60)
@@ -984,7 +994,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
 
       const messageContent = message.content.toLowerCase()
 
-      // Detectar exclusiones
       const exclusions = extractExclusions(message.content)
       if (exclusions.length > 0) {
         exclusions.forEach((exclusion) => {
@@ -994,7 +1003,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
         })
       }
 
-      // Detectar indicadores de satisfacción
       const positiveWords = ["gracias", "perfecto", "excelente", "bueno", "ok", "bien", "genial", "súper", "rico"]
       const negativeWords = [
         "problema",
@@ -1017,7 +1025,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
         clientAnalysis.complaints++
       }
 
-      // Detectar problemas de pago
       if (
         messageContent.includes("pago") ||
         messageContent.includes("mañana lo pago") ||
@@ -1029,7 +1036,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
         clientAnalysis.paymentIssues++
       }
 
-      // Analizar pedidos
       const orders = parseMultipleOrders(message.content)
 
       if (orders.length > 0) {
@@ -1041,13 +1047,11 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
           const detectedProducts: string[] = []
           let detailedProducts: Array<{ product: string; quantity: number }> = []
 
-          // Procesar cambios
           if (order.cambios && order.cambios > 0) {
             clientAnalysis.totalCambios += order.cambios
             totalCambios += order.cambios
           }
 
-          // Procesar destinos múltiples
           if (order.destination) {
             const existingDestination = clientAnalysis.subDestinations.find(
               (d) => d.destination.toLowerCase() === order.destination!.toLowerCase(),
@@ -1065,7 +1069,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
           }
 
           if (orderCategory === "Específico (Complacencia)") {
-            // Detectar productos específicos
             Object.entries(productPatterns).forEach(([productName, pattern]) => {
               if (pattern.regex.test(message.content)) {
                 const productCount = Math.floor(orderPieces / Object.keys(productPatterns).length) || 1
@@ -1089,7 +1092,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
             totalSpecificOrders++
             totalSpecificPieces += orderPieces
           } else if (orderCategory === "Mixto") {
-            // Procesar pedido mixto
             detailedProducts = parseMixedOrder(message.content, orderPieces)
 
             detailedProducts.forEach((item) => {
@@ -1112,7 +1114,7 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
                   orderValue += item.quantity * productPattern.estimatedPrice
                 }
               } else {
-                orderValue += item.quantity * 850 // Precio surtido
+                orderValue += item.quantity * 850
               }
 
               detectedProducts.push(`${item.quantity} ${item.product}`)
@@ -1124,7 +1126,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
             totalSpecificOrders++
             totalSpecificPieces += orderPieces
           } else {
-            // Pedido general (surtido)
             detectedProducts.push(`${orderPieces} piezas surtidas`)
             orderValue = orderPieces * 850
 
@@ -1135,7 +1136,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
             totalGeneralPieces += orderPieces
           }
 
-          // Buscar precios explícitos
           const priceRegex = /\$?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)/g
           const prices = message.content.match(priceRegex)
           if (prices) {
@@ -1151,7 +1151,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
             orderValue = orderPieces * 850
           }
 
-          // Registrar el pedido
           clientAnalysis.totalOrders++
           clientAnalysis.totalPieces += orderPieces
           totalOrders++
@@ -1163,7 +1162,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
             clientAnalysis.lastOrderDate = message.timestamp
           }
 
-          // Crear registro de pedido
           const orderRecord: OrderData = {
             date: message.timestamp.toLocaleDateString(),
             client: message.sender,
@@ -1188,7 +1186,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
         })
       }
     } else {
-      // Mensaje de la panadería
       if (context.lastClientSender) {
         const clientState = context.clientStates.get(context.lastClientSender)
         if (clientState) {
@@ -1199,7 +1196,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     }
   }
 
-  // Función para extraer tags de conversación
   function extractConversationTags(content: string, timestamp: Date): ConversationTag[] {
     const tags: ConversationTag[] = []
     const lowerContent = content.toLowerCase()
@@ -1231,11 +1227,9 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     return tags
   }
 
-  // Calcular métricas finales para cada cliente
   const clientAnalysisPromises = Array.from(clients.entries()).map(async ([clientName, analysis]) => {
     const clientState = context.clientStates.get(clientName)
 
-    // Calcular métricas finales
     analysis.avgPiecesPerOrder = analysis.totalOrders > 0 ? analysis.totalPieces / analysis.totalOrders : 0
     analysis.avgOrderValue = analysis.totalOrders > 0 ? analysis.totalSpent / analysis.totalOrders : 0
     analysis.satisfactionScore = analysis.compliments - analysis.complaints
@@ -1250,7 +1244,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
       }
     }
 
-    // Calcular frecuencia de pedidos
     const orderDates = ordersData
       .filter((order) => order.client === clientName)
       .map((order) => new Date(order.date))
@@ -1263,7 +1256,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
       analysis.orderFrequency = daysDiff > 0 ? (analysis.totalOrders / daysDiff) * 7 : 0
     }
 
-    // Calcular porcentajes de productos preferidos
     const totalProductCount = analysis.preferredProducts.reduce((sum, p) => sum + p.count, 0)
     analysis.preferredProducts = analysis.preferredProducts
       .sort((a, b) => b.count - a.count)
@@ -1273,7 +1265,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
         percentage: totalProductCount > 0 ? Math.round((product.count / totalProductCount) * 100) : 0,
       }))
 
-    // Detectar patrones de pedidos actualizados
     const patterns = []
     if (analysis.avgPiecesPerOrder >= 25) patterns.push("Pedidos grandes")
     if (analysis.orderFrequency > 4) patterns.push("Cliente frecuente")
@@ -1291,7 +1282,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     if (analysis.exclusions.length > 0) patterns.push("Tiene exclusiones específicas")
     analysis.orderPatterns = patterns
 
-    // Calcular puntuación de dificultad actualizada
     analysis.difficultyScore =
       (analysis.messagesPerOrder > 2 ? 1 : 0) +
       (analysis.responseTimeHours > 4 ? 2 : 0) +
@@ -1302,11 +1292,9 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
       (analysis.totalCambios > 5 ? 1 : 0) +
       (analysis.exclusions.length > 2 ? 1 : 0)
 
-    // Calcular días desde el último pedido
     const today = new Date()
     const daysSinceLastOrder = Math.floor((today.getTime() - analysis.lastOrderDate.getTime()) / (1000 * 60 * 60 * 24))
 
-    // Implementar segmentación de clientes
     if (analysis.orderFrequency > 3 && analysis.totalSpent > 50000) {
       analysis.segment = "VIP"
     } else if (daysSinceLastOrder > 15 || analysis.satisfactionScore < 0) {
@@ -1317,7 +1305,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
       analysis.segment = "Regular"
     }
 
-    // Calcular nivel de riesgo de abandono
     let riskScore = 0
 
     if (daysSinceLastOrder > 20) riskScore += 3
@@ -1333,7 +1320,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
       analysis.churnRisk = "Bajo"
     }
 
-    // Analizar con GPT
     let gptAnalysis: GPTAnalysis | null = null
     if (process.env.OPENAI_API_KEY && analysis.totalOrders > 0) {
       try {
@@ -1351,10 +1337,8 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     return { analysis, gptAnalysis }
   })
 
-  // Esperar a que se completen todos los análisis
   const clientResults = await Promise.all(clientAnalysisPromises)
 
-  // Preparar datos finales con todos los nuevos campos
   const clientsData = clientResults.map(({ analysis, gptAnalysis }) => ({
     "Nombre Cliente": analysis.name,
     "Total Pedidos": analysis.totalOrders,
@@ -1369,7 +1353,7 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     "Mensajes por Pedido": Math.round(analysis.messagesPerOrder * 10) / 10,
     "Tiempo Respuesta (hrs)": Math.round(analysis.responseTimeHours * 10) / 10,
     "Puntuación Dificultad": analysis.difficultyScore,
-    "Último Pedido": analysis.lastOrderDate.toLocaleDateString(),
+    "Último Pedido": analysis.lastOrderDate.toISOString(),
     "Productos Preferidos": analysis.preferredProducts.map((p) => `${p.product} (${p.count})`).join(", "),
     "Productos Detallados": analysis.preferredProducts,
     Patrones: analysis.orderPatterns.join(", "),
@@ -1393,7 +1377,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
       .map((d) => `${d.destination} (${d.orders} pedidos, ${d.pieces} piezas)`)
       .join(", "),
     Exclusiones: analysis.exclusions.join(", "),
-    // Nuevos campos de GPT
     "Perfil de Cliente": gptAnalysis?.customerProfile || "Análisis en proceso",
     "Preferencias Clave": gptAnalysis?.keyPreferences || [],
     "Exclusiones Clave": gptAnalysis?.keyExclusions || [],
@@ -1457,7 +1440,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
       : "N/A",
   }))
 
-  // Calcular estadísticas actualizadas
   const segmentStats = {
     VIP: clientsData.filter((client) => client["Segmento"] === "VIP").length,
     "En Riesgo": clientsData.filter((client) => client["Segmento"] === "En Riesgo").length,
@@ -1471,7 +1453,6 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     Bajo: clientsData.filter((client) => client["Riesgo de Abandono"] === "Bajo").length,
   }
 
-  // Estadísticas adicionales para los nuevos campos
   const orderCategoryStats = {
     "General (Surtido)": totalGeneralOrders,
     "Específico (Complacencia)": totalSpecificOrders,

@@ -192,6 +192,25 @@ export default function WhatsAppAnalyzer() {
     )
   }
 
+  const getSegmentBadge = (segment: string) => {
+    const variants = {
+      VIP: "default",
+      "En Riesgo": "destructive",
+      Regular: "secondary",
+      Nuevo: "outline",
+    } as const
+    return <Badge variant={variants[segment as keyof typeof variants] || "outline"}>{segment}</Badge>
+  }
+
+  const getChurnRiskBadge = (churnRisk: string) => {
+    const variants = {
+      Alto: "destructive",
+      Medio: "secondary",
+      Bajo: "default",
+    } as const
+    return <Badge variant={variants[churnRisk as keyof typeof variants] || "outline"}>{churnRisk}</Badge>
+  }
+
   const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884D8", "#82CA9D", "#FFC658", "#FF7C7C"]
 
   // Funciones de Análisis Predictivo y Segmentación
@@ -1503,6 +1522,7 @@ export default function WhatsAppAnalyzer() {
                           <TableHead>Tiempo Resp.</TableHead>
                           <TableHead>Dificultad</TableHead>
                           <TableHead>Satisfacción</TableHead>
+                          <TableHead>Segmento</TableHead>
                           <TableHead>Riesgo</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -1521,7 +1541,8 @@ export default function WhatsAppAnalyzer() {
                                 {client["Puntuación Satisfacción"]}
                               </Badge>
                             </TableCell>
-                            <TableCell>{getRiskBadge(client["Nivel de Riesgo"] || "low")}</TableCell>
+                            <TableCell>{getSegmentBadge(client["Segmento"] || "Regular")}</TableCell>
+                            <TableCell>{getChurnRiskBadge(client["Riesgo de Abandono"] || "Bajo")}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -1541,6 +1562,8 @@ export default function WhatsAppAnalyzer() {
                         <CardTitle className="flex items-center justify-between">
                           <span>{client["Nombre Cliente"]}</span>
                           <div className="flex gap-2">
+                            {getSegmentBadge(client["Segmento"] || "Regular")}
+                            {getChurnRiskBadge(client["Riesgo de Abandono"] || "Bajo")}
                             {getDifficultyBadge(client["Puntuación Dificultad"])}
                             {getRiskBadge(client["Nivel de Riesgo"] || "low")}
                             <Badge variant={client["Puntuación Satisfacción"] > 0 ? "default" : "destructive"}>
@@ -1563,7 +1586,6 @@ export default function WhatsAppAnalyzer() {
                                   <CartesianGrid strokeDasharray="3 3" />
                                   <XAxis dataKey="month" />
                                   <YAxis />
-                                  <Tooltip />
                                   <Line type="monotone" dataKey="pedidos" stroke="#8884d8" strokeWidth={2} />
                                   <Line type="monotone" dataKey="piezas" stroke="#82ca9d" strokeWidth={2} />
                                 </LineChart>

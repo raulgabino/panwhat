@@ -34,6 +34,8 @@ interface ClientAnalysis {
   generalOrders: number
   specificPieces: number
   generalPieces: number
+  segment?: string // Nuevo campo para segmentación
+  churnRisk?: string // Nuevo campo para riesgo de abandono
 }
 
 interface OrderData {
@@ -826,6 +828,43 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
       (analysis.orderFrequency < 1 ? 1 : 0) +
       (analysis.complaints > analysis.compliments ? 2 : 0)
 
+    // Calcular días desde el último pedido
+    const today = new Date()
+    const daysSinceLastOrder = Math.floor((today.getTime() - analysis.lastOrderDate.getTime()) / (1000 * 60 * 60 * 24))
+
+    // Implementar segmentación de clientes
+    // 1. VIP: frecuenciaSemanal > 3 Y totalGastado > 50000
+    // 2. En Riesgo: diasDesdeUltimoPedido > 15 O puntuacionSatisfaccion < 0
+    // 3. Nuevo: totalPedidos < 3
+    // 4. Regular: Todos los demás
+    if (analysis.orderFrequency > 3 && analysis.totalSpent > 50000) {
+      analysis.segment = "VIP"
+    } else if (daysSinceLastOrder > 15 || analysis.satisfactionScore < 0) {
+      analysis.segment = "En Riesgo"
+    } else if (analysis.totalOrders < 3) {
+      analysis.segment = "Nuevo"
+    } else {
+      analysis.segment = "Regular"
+    }
+
+    // Calcular nivel de riesgo de abandono (churnRisk)
+    let riskScore = 0
+
+    // Sumar puntos al riskScore según los criterios
+    if (daysSinceLastOrder > 20) riskScore += 3
+    if (analysis.difficultyScore > 4) riskScore += 2
+    if (analysis.satisfactionScore < 0) riskScore += 2
+    riskScore += analysis.paymentIssues * 3
+
+    // Asignar nivel de riesgo basado en el riskScore
+    if (riskScore >= 5) {
+      analysis.churnRisk = "Alto"
+    } else if (riskScore >= 3) {
+      analysis.churnRisk = "Medio"
+    } else {
+      analysis.churnRisk = "Bajo"
+    }
+
     // Analizar con GPT si está disponible
     let gptAnalysis: GPTAnalysis | null = null
     if (process.env.OPENAI_API_KEY && analysis.totalOrders > 0) {
@@ -878,6 +917,8 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     "Insights GPT": gptAnalysis?.insights || [],
     "Recomendaciones GPT": gptAnalysis?.recommendations || [],
     Predicciones: gptAnalysis?.predictedActions || [],
+    Segmento: analysis.segment, // Nuevo campo de segmentación
+    "Riesgo de Abandono": analysis.churnRisk, // Nuevo campo de riesgo de abandono
   }))
 
   const productsData = Array.from(products.entries()).map(([product, count]) => ({
@@ -930,6 +971,21 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     Hora: order.hour,
   }))
 
+  // Calcular estadísticas de segmentación
+  const segmentStats = {
+    VIP: clientsData.filter((client) => client["Segmento"] === "VIP").length,
+    "En Riesgo": clientsData.filter((client) => client["Segmento"] === "En Riesgo").length,
+    Nuevo: clientsData.filter((client) => client["Segmento"] === "Nuevo").length,
+    Regular: clientsData.filter((client) => client["Segmento"] === "Regular").length,
+  }
+
+  // Calcular estadísticas de riesgo de abandono
+  const churnRiskStats = {
+    Alto: clientsData.filter((client) => client["Riesgo de Abandono"] === "Alto").length,
+    Medio: clientsData.filter((client) => client["Riesgo de Abandono"] === "Medio").length,
+    Bajo: clientsData.filter((client) => client["Riesgo de Abandono"] === "Bajo").length,
+  }
+
   return {
     totalClients: clients.size,
     totalOrders,
@@ -949,5 +1005,7 @@ async function analyzeConversations(messages: Message[], isAccumulative = false,
     ordersData: ordersExportData,
     isAccumulative,
     totalConversationsProcessed: totalConversations,
+    segmentStats,
+    churnRiskStats,
   }
 }

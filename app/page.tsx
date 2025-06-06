@@ -1,12 +1,15 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
+import dynamic from "next/dynamic"
+import { parseISO } from "date-fns"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Upload,
   Download,
@@ -21,6 +24,24 @@ import {
   Clock,
 } from "lucide-react"
 import { Progress } from "@/components/ui/progress"
+import { useVirtualizer } from "@tanstack/react-virtual"
+
+// Importaciones dinámicas de recharts para evitar problemas de SSR
+const BarChart = dynamic(() => import("recharts").then((mod) => mod.BarChart), { ssr: false })
+const Bar = dynamic(() => import("recharts").then((mod) => mod.Bar), { ssr: false })
+const XAxis = dynamic(() => import("recharts").then((mod) => mod.XAxis), { ssr: false })
+const YAxis = dynamic(() => import("recharts").then((mod) => mod.YAxis), { ssr: false })
+const CartesianGrid = dynamic(() => import("recharts").then((mod) => mod.CartesianGrid), { ssr: false })
+const Tooltip = dynamic(() => import("recharts").then((mod) => mod.Tooltip), { ssr: false })
+const ResponsiveContainer = dynamic(() => import("recharts").then((mod) => mod.ResponsiveContainer), { ssr: false })
+const PieChart = dynamic(() => import("recharts").then((mod) => mod.PieChart), { ssr: false })
+const Pie = dynamic(() => import("recharts").then((mod) => mod.Pie), { ssr: false })
+const Cell = dynamic(() => import("recharts").then((mod) => mod.Cell), { ssr: false })
+const LineChart = dynamic(() => import("recharts").then((mod) => mod.LineChart), { ssr: false })
+const Line = dynamic(() => import("recharts").then((mod) => mod.Line), { ssr: false })
+const AreaChart = dynamic(() => import("recharts").then((mod) => mod.AreaChart), { ssr: false })
+const Area = dynamic(() => import("recharts").then((mod) => mod.Area), { ssr: false })
+const Legend = dynamic(() => import("recharts").then((mod) => mod.Legend), { ssr: false })
 
 export default function WhatsAppAnalyzer() {
   const [conversations, setConversations] = useState("")
@@ -53,6 +74,7 @@ export default function WhatsAppAnalyzer() {
   // Estados para otras secciones
   const [trends, setTrends] = useState<any[]>([])
   const [trendsLoading, setTrendsLoading] = useState(false)
+  const [predictiveAnalysis, setPredictiveAnalysis] = useState<any>(null)
 
   const [conversationHistory, setConversationHistory] = useState<Array<{ id: number; preview: string; date: string }>>(
     [],
@@ -201,6 +223,20 @@ export default function WhatsAppAnalyzer() {
     }
   }
 
+  // Función para obtener análisis predictivo
+  const fetchPredictiveAnalysis = async () => {
+    if (!jobId) return
+
+    try {
+      const response = await fetch(`/api/jobs/results/${jobId}?part=predictive`)
+      const data = await response.json()
+
+      setPredictiveAnalysis(data.predictiveAnalysis)
+    } catch (error) {
+      console.error("Error fetching predictive analysis:", error)
+    }
+  }
+
   const handleAddConversation = () => {
     if (!conversations.trim()) {
       alert("Por favor, ingresa una conversación antes de agregarla")
@@ -237,6 +273,7 @@ export default function WhatsAppAnalyzer() {
     setProducts([])
     setOrders([])
     setTrends([])
+    setPredictiveAnalysis(null)
 
     try {
       const combinedConversations = allConversations.join("\n")
@@ -279,6 +316,7 @@ export default function WhatsAppAnalyzer() {
       setProducts([])
       setOrders([])
       setTrends([])
+      setPredictiveAnalysis(null)
       setConversations("")
       setJobId(null)
       setJobStatus("idle")
@@ -315,6 +353,11 @@ export default function WhatsAppAnalyzer() {
       case "trends":
         if (trends.length === 0) {
           fetchTrends()
+        }
+        break
+      case "gpt-insights":
+        if (!predictiveAnalysis) {
+          fetchPredictiveAnalysis()
         }
         break
     }
@@ -370,13 +413,37 @@ export default function WhatsAppAnalyzer() {
     )
   }
 
+  // Función para formatear fechas
+  const formatDate = (dateString: string) => {
+    try {
+      const date = parseISO(dateString)
+      return date.toLocaleDateString("es-ES", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+      })
+    } catch (error) {
+      return "Fecha inválida"
+    }
+  }
+
+  // Virtualización para la tabla de clientes
+  const parentRef = useRef<HTMLDivElement>(null)
+
+  const virtualizer = useVirtualizer({
+    count: clients.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 60,
+    overscan: 5,
+  })
+
   // Función para obtener el mensaje de estado
   const getStatusMessage = () => {
     switch (jobStatus) {
       case "pending":
         return "Trabajo en cola, esperando procesamiento..."
       case "processing":
-        return "Analizando conversaciones..."
+        return "Analizando conversaciones con IA..."
       case "completed":
         return "Análisis completado"
       case "failed":
@@ -385,6 +452,9 @@ export default function WhatsAppAnalyzer() {
         return ""
     }
   }
+
+  // Colores para gráficos
+  const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884D8", "#82CA9D"]
 
   return (
     <div className="container mx-auto p-6 max-w-7xl">
@@ -526,8 +596,9 @@ export default function WhatsAppAnalyzer() {
         {/* Results Section */}
         {jobStatus === "completed" && summaryData && (
           <Tabs defaultValue="overview" className="w-full" onValueChange={handleTabChange}>
-            <TabsList className="grid w-full grid-cols-6">
-              <TabsTrigger value="overview">Resumen General</TabsTrigger>
+            <TabsList className="grid w-full grid-cols-7">
+              <TabsTrigger value="overview">Resumen</TabsTrigger>
+              <TabsTrigger value="visualizations">Gráficos</TabsTrigger>
               <TabsTrigger value="clients">Clientes</TabsTrigger>
               <TabsTrigger value="products">Productos</TabsTrigger>
               <TabsTrigger value="trends">Tendencias</TabsTrigger>
@@ -662,6 +733,126 @@ export default function WhatsAppAnalyzer() {
                   </div>
                 </CardContent>
               </Card>
+
+              {/* Estadísticas de Segmentación */}
+              {summaryData.segmentStats && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>👥 Segmentación de Clientes</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div className="text-center">
+                        <p className="text-2xl font-bold text-yellow-600">{summaryData.segmentStats.VIP || 0}</p>
+                        <p className="text-sm text-muted-foreground">Clientes VIP</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-2xl font-bold text-green-600">{summaryData.segmentStats.Regular || 0}</p>
+                        <p className="text-sm text-muted-foreground">Clientes Regulares</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-2xl font-bold text-blue-600">{summaryData.segmentStats.Nuevo || 0}</p>
+                        <p className="text-sm text-muted-foreground">Clientes Nuevos</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-2xl font-bold text-red-600">{summaryData.segmentStats["En Riesgo"] || 0}</p>
+                        <p className="text-sm text-muted-foreground">En Riesgo</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+            </TabsContent>
+
+            <TabsContent value="visualizations" className="space-y-4">
+              {/* Gráficos de análisis */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Gráfico de Segmentación */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Distribución de Segmentos</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <ResponsiveContainer width="100%" height={300}>
+                      <PieChart>
+                        <Pie
+                          data={
+                            summaryData.segmentStats
+                              ? Object.entries(summaryData.segmentStats).map(([key, value]) => ({
+                                  name: key,
+                                  value: value as number,
+                                }))
+                              : []
+                          }
+                          cx="50%"
+                          cy="50%"
+                          labelLine={false}
+                          label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                          outerRadius={80}
+                          fill="#8884d8"
+                          dataKey="value"
+                        >
+                          {summaryData.segmentStats &&
+                            Object.entries(summaryData.segmentStats).map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                            ))}
+                        </Pie>
+                        <Tooltip />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+
+                {/* Gráfico de Tipos de Pedido */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Tipos de Pedidos</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <ResponsiveContainer width="100%" height={300}>
+                      <BarChart
+                        data={[
+                          { name: "Específicos", value: summaryData.totalSpecificOrders || 0 },
+                          { name: "Generales", value: summaryData.totalGeneralOrders || 0 },
+                        ]}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="name" />
+                        <YAxis />
+                        <Tooltip />
+                        <Bar dataKey="value" fill="#8884d8" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+
+                {/* Gráfico de Tendencias por Hora */}
+                {trends.length > 0 && (
+                  <Card className="md:col-span-2">
+                    <CardHeader>
+                      <CardTitle>Actividad por Hora del Día</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <ResponsiveContainer width="100%" height={300}>
+                        <LineChart
+                          data={trends
+                            .filter((t) => t.Tipo === "Hora")
+                            .map((t) => ({
+                              hora: t.Periodo,
+                              actividad: t.Actividad,
+                            }))}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="hora" />
+                          <YAxis />
+                          <Tooltip />
+                          <Line type="monotone" dataKey="actividad" stroke="#8884d8" strokeWidth={2} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
             </TabsContent>
 
             <TabsContent value="clients" className="space-y-4">
@@ -674,39 +865,68 @@ export default function WhatsAppAnalyzer() {
                 </CardHeader>
                 <CardContent>
                   {clientsLoading ? (
-                    <div className="text-center py-8">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-                      <p className="mt-2">Cargando clientes...</p>
+                    <div className="space-y-4">
+                      {Array.from({ length: 10 }).map((_, i) => (
+                        <div key={i} className="flex items-center space-x-4">
+                          <Skeleton className="h-4 w-[200px]" />
+                          <Skeleton className="h-4 w-[100px]" />
+                          <Skeleton className="h-4 w-[80px]" />
+                          <Skeleton className="h-4 w-[120px]" />
+                        </div>
+                      ))}
                     </div>
                   ) : (
                     <>
                       <div className="rounded-md border">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead>Cliente</TableHead>
-                              <TableHead>Total Gastado</TableHead>
-                              <TableHead>Pedidos</TableHead>
-                              <TableHead>Frecuencia</TableHead>
-                              <TableHead>Último Pedido</TableHead>
-                              <TableHead>Dificultad</TableHead>
-                              <TableHead>Riesgo</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {clients.map((client: any, index: number) => (
-                              <TableRow key={index}>
-                                <TableCell className="font-medium">{client["Nombre Cliente"]}</TableCell>
-                                <TableCell>${client["Total Gastado"]?.toLocaleString()}</TableCell>
-                                <TableCell>{client["Total Pedidos"]}</TableCell>
-                                <TableCell>{client["Frecuencia Semanal"]} / semana</TableCell>
-                                <TableCell>{client["Último Pedido"]}</TableCell>
-                                <TableCell>{getDifficultyBadge(client["Puntuación Dificultad"])}</TableCell>
-                                <TableCell>{getRiskBadge(client["Nivel de Riesgo"])}</TableCell>
+                        <div ref={parentRef} className="h-[600px] overflow-auto">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Cliente</TableHead>
+                                <TableHead>Total Gastado</TableHead>
+                                <TableHead>Pedidos</TableHead>
+                                <TableHead>Frecuencia</TableHead>
+                                <TableHead>Último Pedido</TableHead>
+                                <TableHead>Dificultad</TableHead>
+                                <TableHead>Riesgo</TableHead>
                               </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
+                            </TableHeader>
+                            <TableBody>
+                              <div
+                                style={{
+                                  height: `${virtualizer.getTotalSize()}px`,
+                                  width: "100%",
+                                  position: "relative",
+                                }}
+                              >
+                                {virtualizer.getVirtualItems().map((virtualItem) => {
+                                  const client = clients[virtualItem.index]
+                                  return (
+                                    <TableRow
+                                      key={virtualItem.key}
+                                      style={{
+                                        position: "absolute",
+                                        top: 0,
+                                        left: 0,
+                                        width: "100%",
+                                        height: `${virtualItem.size}px`,
+                                        transform: `translateY(${virtualItem.start}px)`,
+                                      }}
+                                    >
+                                      <TableCell className="font-medium">{client["Nombre Cliente"]}</TableCell>
+                                      <TableCell>${client["Total Gastado"]?.toLocaleString()}</TableCell>
+                                      <TableCell>{client["Total Pedidos"]}</TableCell>
+                                      <TableCell>{client["Frecuencia Semanal"]} / semana</TableCell>
+                                      <TableCell>{formatDate(client["Último Pedido"])}</TableCell>
+                                      <TableCell>{getDifficultyBadge(client["Puntuación Dificultad"])}</TableCell>
+                                      <TableCell>{getRiskBadge(client["Nivel de Riesgo"])}</TableCell>
+                                    </TableRow>
+                                  )
+                                })}
+                              </div>
+                            </TableBody>
+                          </Table>
+                        </div>
                       </div>
 
                       {/* Paginación */}
@@ -751,9 +971,14 @@ export default function WhatsAppAnalyzer() {
                 </CardHeader>
                 <CardContent>
                   {productsLoading ? (
-                    <div className="text-center py-8">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-                      <p className="mt-2">Cargando productos...</p>
+                    <div className="space-y-4">
+                      {Array.from({ length: 10 }).map((_, i) => (
+                        <div key={i} className="flex items-center space-x-4">
+                          <Skeleton className="h-4 w-[200px]" />
+                          <Skeleton className="h-4 w-[100px]" />
+                          <Skeleton className="h-4 w-[80px]" />
+                        </div>
+                      ))}
                     </div>
                   ) : (
                     <>
@@ -817,9 +1042,8 @@ export default function WhatsAppAnalyzer() {
                 </CardHeader>
                 <CardContent>
                   {trendsLoading ? (
-                    <div className="text-center py-8">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-                      <p className="mt-2">Cargando tendencias...</p>
+                    <div className="space-y-4">
+                      <Skeleton className="h-[300px] w-full" />
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -883,9 +1107,15 @@ export default function WhatsAppAnalyzer() {
                 </CardHeader>
                 <CardContent>
                   {ordersLoading ? (
-                    <div className="text-center py-8">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-                      <p className="mt-2">Cargando pedidos...</p>
+                    <div className="space-y-4">
+                      {Array.from({ length: 10 }).map((_, i) => (
+                        <div key={i} className="flex items-center space-x-4">
+                          <Skeleton className="h-4 w-[100px]" />
+                          <Skeleton className="h-4 w-[150px]" />
+                          <Skeleton className="h-4 w-[200px]" />
+                          <Skeleton className="h-4 w-[80px]" />
+                        </div>
+                      ))}
                     </div>
                   ) : (
                     <>
@@ -904,7 +1134,7 @@ export default function WhatsAppAnalyzer() {
                           <TableBody>
                             {orders.map((order: any, index: number) => (
                               <TableRow key={index}>
-                                <TableCell>{order.Fecha}</TableCell>
+                                <TableCell>{formatDate(order.Fecha)}</TableCell>
                                 <TableCell className="font-medium">{order.Cliente}</TableCell>
                                 <TableCell>{order.Productos}</TableCell>
                                 <TableCell>{order["Total Piezas"]}</TableCell>
